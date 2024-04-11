@@ -1,20 +1,18 @@
 use std::{marker::PhantomData, path::PathBuf};
 
-pub struct TwoBitBfsBuilder<T, Encoder: Fn(&T) -> usize, Decoder: FnMut(&mut T, usize)> {
+pub struct TwoBitBfsBuilder<T, Encoder: Fn(&T) -> u64, Decoder: Fn(&mut T, u64)> {
     encoder: Option<Encoder>,
     decoder: Option<Decoder>,
-    threads: usize,
+    threads: u64,
     chunk_size_bytes: Option<usize>,
-    initial_state: Option<usize>,
-    state_size: Option<usize>,
-    array_file_directories: Option<Vec<PathBuf>>,
-    update_file_directories: Option<Vec<PathBuf>>,
+    initial_state: Option<T>,
+    state_size: Option<u64>,
+    array_file_directory: Option<PathBuf>,
+    update_file_directory: Option<PathBuf>,
     phantom_t: PhantomData<T>,
 }
 
-impl<T, Encoder: Fn(&T) -> usize, Decoder: FnMut(&mut T, usize)>
-    TwoBitBfsBuilder<T, Encoder, Decoder>
-{
+impl<T, Encoder: Fn(&T) -> u64, Decoder: Fn(&mut T, u64)> TwoBitBfsBuilder<T, Encoder, Decoder> {
     pub fn new() -> Self {
         TwoBitBfsBuilder {
             encoder: None,
@@ -23,8 +21,8 @@ impl<T, Encoder: Fn(&T) -> usize, Decoder: FnMut(&mut T, usize)>
             chunk_size_bytes: None,
             initial_state: None,
             state_size: None,
-            array_file_directories: None,
-            update_file_directories: None,
+            array_file_directory: None,
+            update_file_directory: None,
             phantom_t: PhantomData,
         }
     }
@@ -39,7 +37,7 @@ impl<T, Encoder: Fn(&T) -> usize, Decoder: FnMut(&mut T, usize)>
         self
     }
 
-    pub fn threads(mut self, threads: usize) -> Self {
+    pub fn threads(mut self, threads: u64) -> Self {
         self.threads = threads;
         self
     }
@@ -49,28 +47,23 @@ impl<T, Encoder: Fn(&T) -> usize, Decoder: FnMut(&mut T, usize)>
         self
     }
 
-    pub fn initial_state(mut self, initial_state: &T) -> Self {
-        self.initial_state = Some(self
-            .encoder
-            .as_ref()
-            .expect("Encoder is required to set initial state")(
-            initial_state
-        ));
+    pub fn initial_state(mut self, initial_state: T) -> Self {
+        self.initial_state = Some(initial_state);
         self
     }
 
-    pub fn state_size(mut self, state_size: usize) -> Self {
+    pub fn state_size(mut self, state_size: u64) -> Self {
         self.state_size = Some(state_size);
         self
     }
 
-    pub fn array_file_directories(mut self, array_file_directories: Vec<PathBuf>) -> Self {
-        self.array_file_directories = Some(array_file_directories);
+    pub fn array_file_directory(mut self, array_file_directory: PathBuf) -> Self {
+        self.array_file_directory = Some(array_file_directory);
         self
     }
 
-    pub fn update_file_directories(mut self, update_file_directories: Vec<PathBuf>) -> Self {
-        self.update_file_directories = Some(update_file_directories);
+    pub fn update_file_directory(mut self, update_file_directory: PathBuf) -> Self {
+        self.update_file_directory = Some(update_file_directory);
         self
     }
 
@@ -82,21 +75,21 @@ impl<T, Encoder: Fn(&T) -> usize, Decoder: FnMut(&mut T, usize)>
             chunk_size_bytes: self.chunk_size_bytes?,
             initial_state: self.initial_state?,
             state_size: self.state_size?,
-            array_file_directories: self.array_file_directories?,
-            update_file_directories: self.update_file_directories?,
+            array_file_directory: self.array_file_directory?,
+            update_file_directory: self.update_file_directory?,
             phantom_t: PhantomData,
         })
     }
 }
 
-pub struct TwoBitBfs<T, Encoder: Fn(&T) -> usize, Decoder: FnMut(&mut T, usize)> {
+pub struct TwoBitBfs<T, Encoder: Fn(&T) -> u64, Decoder: Fn(&mut T, u64)> {
     encoder: Encoder,
     decoder: Decoder,
-    threads: usize,
+    threads: u64,
     chunk_size_bytes: usize,
-    initial_state: usize,
-    state_size: usize,
-    array_file_directories: Vec<PathBuf>,
-    update_file_directories: Vec<PathBuf>,
+    initial_state: T,
+    state_size: u64,
+    array_file_directory: PathBuf,
+    update_file_directory: PathBuf,
     phantom_t: PhantomData<T>,
 }
