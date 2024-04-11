@@ -99,6 +99,13 @@ impl<
     }
 
     pub fn build(self) -> Option<TwoBitBfs<T, Encoder, Decoder, Expander, EXPANSION_NODES>> {
+        // Require that all chunks are the same size
+        let chunk_size_bytes = self.chunk_size_bytes?;
+        let state_size = self.state_size? as usize;
+        if state_size % (4 * chunk_size_bytes) != 0 {
+            return None;
+        }
+
         Some(TwoBitBfs {
             encoder: self.encoder?,
             decoder: self.decoder?,
