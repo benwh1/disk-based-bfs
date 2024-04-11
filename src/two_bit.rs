@@ -1,28 +1,45 @@
 use std::{marker::PhantomData, path::PathBuf};
 
-pub struct TwoBitBfsBuilder<T, Encoder: Fn(&T) -> u64, Decoder: Fn(&mut T, u64)> {
+pub struct TwoBitBfsBuilder<
+    T,
+    Encoder: Fn(&T) -> u64,
+    Decoder: Fn(&mut T, u64),
+    Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]),
+    const EXPANSION_NODES: usize,
+> {
     encoder: Option<Encoder>,
     decoder: Option<Decoder>,
+    expander: Option<Expander>,
     threads: u64,
     chunk_size_bytes: Option<usize>,
     initial_state: Option<T>,
     state_size: Option<u64>,
     array_file_directory: Option<PathBuf>,
     update_file_directory: Option<PathBuf>,
+    initial_memory_limit: Option<usize>,
     phantom_t: PhantomData<T>,
 }
 
-impl<T, Encoder: Fn(&T) -> u64, Decoder: Fn(&mut T, u64)> TwoBitBfsBuilder<T, Encoder, Decoder> {
+impl<
+        T,
+        Encoder: Fn(&T) -> u64,
+        Decoder: Fn(&mut T, u64),
+        Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]),
+        const EXPANSION_NODES: usize,
+    > TwoBitBfsBuilder<T, Encoder, Decoder, Expander, EXPANSION_NODES>
+{
     pub fn new() -> Self {
         TwoBitBfsBuilder {
             encoder: None,
             decoder: None,
+            expander: None,
             threads: 1,
             chunk_size_bytes: None,
             initial_state: None,
             state_size: None,
             array_file_directory: None,
             update_file_directory: None,
+            initial_memory_limit: None,
             phantom_t: PhantomData,
         }
     }
@@ -34,6 +51,15 @@ impl<T, Encoder: Fn(&T) -> u64, Decoder: Fn(&mut T, u64)> TwoBitBfsBuilder<T, En
 
     pub fn decoder(mut self, decoder: Decoder) -> Self {
         self.decoder = Some(decoder);
+        self
+    }
+
+    pub fn expander(mut self, expander: Expander) -> Self {
+        self.expander = Some(expander);
+        self
+    }
+
+    pub fn expansion_nodes(self, _: [(); EXPANSION_NODES]) -> Self {
         self
     }
 
@@ -67,29 +93,44 @@ impl<T, Encoder: Fn(&T) -> u64, Decoder: Fn(&mut T, u64)> TwoBitBfsBuilder<T, En
         self
     }
 
-    pub fn build(self) -> Option<TwoBitBfs<T, Encoder, Decoder>> {
+    pub fn initial_memory_limit(mut self, initial_memory_limit: usize) -> Self {
+        self.initial_memory_limit = Some(initial_memory_limit);
+        self
+    }
+
+    pub fn build(self) -> Option<TwoBitBfs<T, Encoder, Decoder, Expander, EXPANSION_NODES>> {
         Some(TwoBitBfs {
             encoder: self.encoder?,
             decoder: self.decoder?,
+            expander: self.expander?,
             threads: self.threads,
             chunk_size_bytes: self.chunk_size_bytes?,
             initial_state: self.initial_state?,
             state_size: self.state_size?,
             array_file_directory: self.array_file_directory?,
             update_file_directory: self.update_file_directory?,
+            initial_memory_limit: self.initial_memory_limit?,
             phantom_t: PhantomData,
         })
     }
 }
 
-pub struct TwoBitBfs<T, Encoder: Fn(&T) -> u64, Decoder: Fn(&mut T, u64)> {
+pub struct TwoBitBfs<
+    T,
+    Encoder: Fn(&T) -> u64,
+    Decoder: Fn(&mut T, u64),
+    Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]),
+    const EXPANSION_NODES: usize,
+> {
     encoder: Encoder,
     decoder: Decoder,
+    expander: Expander,
     threads: u64,
     chunk_size_bytes: usize,
     initial_state: T,
     state_size: u64,
     array_file_directory: PathBuf,
     update_file_directory: PathBuf,
+    initial_memory_limit: usize,
     phantom_t: PhantomData<T>,
 }
