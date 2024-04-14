@@ -201,6 +201,17 @@ impl<
 
         file.read_exact(chunk_bytes).unwrap();
 
+        // Set current positions to old
+        let current = if next == NEXT { CURRENT } else { NEXT };
+        for byte in chunk_bytes.iter_mut() {
+            for i in 0..4 {
+                if (*byte >> (i * 2)) & 0b11 == current {
+                    let mask = 0b11 << (i * 2);
+                    *byte = (*byte & !mask) | OLD << (i * 2);
+                }
+            }
+        }
+
         let mut new_positions = 0u64;
 
         for i in 0..self.num_array_chunks() {
@@ -465,14 +476,9 @@ impl<
                             self.decode(&mut state, encoded);
                             self.expand(&mut state, &mut expanded);
                             for node in expanded {
-                                let (chunk_idx, _, _) = self.to_chunk_idx(node);
-                                update_sets[chunk_idx].insert(node);
+                                let (idx, _, _) = self.to_chunk_idx(node);
+                                update_sets[idx].insert(node);
                             }
-
-                            // Set the val to `OLD` after expanding
-                            let mask = 0b11 << (byte_offset * 2);
-                            let new_byte = (byte & !mask) | OLD << (byte_offset * 2);
-                            chunk_bytes[chunk_offset] = new_byte;
                         }
                     }
                 }
