@@ -412,8 +412,9 @@ impl<
                 self.expand(&mut state, &mut expanded);
                 for node in expanded {
                     if !old.contains(&node) && !current.contains(&node) {
-                        next.insert(node);
-                        new += 1;
+                        if next.insert(node) {
+                            new += 1;
+                        }
                     }
                 }
             }
