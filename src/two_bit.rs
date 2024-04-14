@@ -243,7 +243,7 @@ impl<
                     let (_, chunk_offset, byte_offset) = self.to_chunk_idx(val);
                     let byte = chunk_bytes[chunk_offset];
 
-                    if byte >> (byte_offset * 2) == UNSEEN {
+                    if (byte >> (byte_offset * 2)) & 0b11 == UNSEEN {
                         let mask = 0b11 << (byte_offset * 2);
                         let new_byte = (byte & !mask) | next << (byte_offset * 2);
                         chunk_bytes[chunk_offset] = new_byte;
