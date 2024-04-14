@@ -136,6 +136,11 @@ impl<
     }
 }
 
+const UNSEEN: u8 = 0b00;
+const CURRENT: u8 = 0b01;
+const NEXT: u8 = 0b10;
+const OLD: u8 = 0b11;
+
 pub struct TwoBitBfs<
     T: Clone,
     Encoder: Fn(&T) -> u64,
@@ -225,6 +230,92 @@ impl<
         }
 
         next.clear();
+    }
+
+    /// Updates a chunk from depth `depth` to depth `depth + 1`
+    fn update_chunk(&self, chunk_bytes: &mut [u8], chunk_idx: usize, depth: usize) {
+        // Read the chunk from disk
+        let dir_path = self.update_file_directory.join(format!("depth-{depth}"));
+        let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
+        let mut file = File::open(file_path).unwrap();
+
+        // Check that the file size is correct
+        let expected_size = self.chunk_size_bytes;
+        let actual_size = file.metadata().unwrap().len();
+        assert_eq!(expected_size, actual_size as usize);
+
+        file.read_exact(chunk_bytes).unwrap();
+
+        // Iterate over update files
+        for i in 0..self.num_array_chunks() {
+            let file_path = self
+                .update_file_directory
+                .join(format!("depth-{}", depth + 1))
+                .join(format!("update-chunk-{chunk_idx}"))
+                .join(format!("from-chunk-{i}.dat"));
+            let file = File::open(file_path).unwrap();
+            let expected_entries = file.metadata().unwrap().len() / 8;
+            let mut reader = BufReader::new(file);
+
+            // Read 8 bytes at a time, and update the current chunk
+            let mut buf = [0u8; 8];
+            let mut entries = 0;
+
+            let mut new_positions = 0u64;
+
+            while let Ok(bytes_read) = reader.read(&mut buf) {
+                if bytes_read == 0 {
+                    break;
+                }
+
+                let val = u64::from_le_bytes(buf);
+                let (_, chunk_offset, byte_offset) = self.to_chunk_idx(val);
+                let byte = chunk_bytes[chunk_offset];
+
+                if byte >> (byte_offset * 2) == UNSEEN {
+                    let mask = 0b11 << (byte_offset * 2);
+                    let new_byte = (byte & !mask) | NEXT << (byte_offset * 2);
+                    chunk_bytes[chunk_offset] = new_byte;
+
+                    new_positions += 1;
+                }
+
+                entries += 1;
+            }
+
+            assert_eq!(entries, expected_entries);
+
+            // Write new chunk
+            let new_chunk_path = self
+                .array_file_directory
+                .join(format!("depth-{}", depth + 1))
+                .join(format!("chunk-{chunk_idx}.dat"));
+            let mut new_chunk_file = File::create_new(new_chunk_path).unwrap();
+            new_chunk_file.write_all(&chunk_bytes).unwrap();
+
+            // Write info file containing number of new positions
+            let info_file_path = self
+                .info_directory
+                .join(format!("depth-{}", depth + 1))
+                .join(format!("update-chunk-{chunk_idx}"))
+                .join(format!("from-chunk-{i}.info"));
+            let mut info_file = File::create_new(info_file_path).unwrap();
+            info_file.write_all(&new_positions.to_le_bytes()).unwrap();
+
+            // Delete the old chunk file
+            let old_chunk_path = self
+                .array_file_directory
+                .join(format!("depth-{depth}"))
+                .join(format!("chunk-{chunk_idx}.dat"));
+            std::fs::remove_file(old_chunk_path).unwrap();
+
+            // Delete all the update files
+            let update_dir_path = self
+                .update_file_directory
+                .join(format!("depth-{}", depth + 1))
+                .join(format!("update-chunk-{chunk_idx}"));
+            std::fs::remove_dir_all(update_dir_path).unwrap();
+        }
     }
 
     /// Converts an encoded node value to (chunk_idx, chunk_offset, byte_offset)
@@ -345,11 +436,6 @@ impl<
 
         // We ran out of memory. Continue BFS using disk.
 
-        const UNSEEN: u8 = 0b00;
-        const CURRENT: u8 = 0b01;
-        const NEXT: u8 = 0b10;
-        const OLD: u8 = 0b11;
-
         for chunk_idx in 0..self.num_array_chunks() {
             const UNSEEN_BYTE: u8 = UNSEEN * 0b01010101;
             let mut chunk_bytes = vec![UNSEEN_BYTE; self.chunk_size_bytes];
@@ -463,86 +549,8 @@ impl<
             }
 
             // Read the update files and update the array chunks
-
             for chunk_idx in 0..self.num_array_chunks() {
-                // Read the chunk from disk
-                let dir_path = self.update_file_directory.join(format!("depth-{depth}"));
-                let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
-                let mut file = File::open(file_path).unwrap();
-                let bytes_read = file.read_to_end(&mut chunk_bytes).unwrap();
-
-                assert_eq!(bytes_read, self.chunk_size_bytes);
-
-                // Iterate over update files
-                for i in 0..self.num_array_chunks() {
-                    let file_path = self
-                        .update_file_directory
-                        .join(format!("depth-{}", depth + 1))
-                        .join(format!("update-chunk-{chunk_idx}"))
-                        .join(format!("from-chunk-{i}.dat"));
-                    let file = File::open(file_path).unwrap();
-                    let expected_entries = file.metadata().unwrap().len() / 8;
-                    let mut reader = BufReader::new(file);
-
-                    // Read 8 bytes at a time, and update the current chunk
-                    let mut buf = [0u8; 8];
-                    let mut entries = 0;
-
-                    let mut new_positions = 0u64;
-
-                    while let Ok(bytes_read) = reader.read(&mut buf) {
-                        if bytes_read == 0 {
-                            break;
-                        }
-
-                        let val = u64::from_le_bytes(buf);
-                        let (_, chunk_offset, byte_offset) = self.to_chunk_idx(val);
-                        let byte = chunk_bytes[chunk_offset];
-
-                        if byte >> (byte_offset * 2) == UNSEEN {
-                            let mask = 0b11 << (byte_offset * 2);
-                            let new_byte = (byte & !mask) | NEXT << (byte_offset * 2);
-                            chunk_bytes[chunk_offset] = new_byte;
-
-                            new_positions += 1;
-                        }
-
-                        entries += 1;
-                    }
-
-                    assert_eq!(entries, expected_entries);
-
-                    // Write new chunk
-                    let new_chunk_path = self
-                        .array_file_directory
-                        .join(format!("depth-{}", depth + 1))
-                        .join(format!("chunk-{chunk_idx}.dat"));
-                    let mut new_chunk_file = File::create_new(new_chunk_path).unwrap();
-                    new_chunk_file.write_all(&chunk_bytes).unwrap();
-
-                    // Write info file containing number of new positions
-                    let info_file_path = self
-                        .info_directory
-                        .join(format!("depth-{}", depth + 1))
-                        .join(format!("update-chunk-{chunk_idx}"))
-                        .join(format!("from-chunk-{i}.info"));
-                    let mut info_file = File::create_new(info_file_path).unwrap();
-                    info_file.write_all(&new_positions.to_le_bytes()).unwrap();
-
-                    // Delete the old chunk file
-                    let old_chunk_path = self
-                        .array_file_directory
-                        .join(format!("depth-{depth}"))
-                        .join(format!("chunk-{chunk_idx}.dat"));
-                    std::fs::remove_file(old_chunk_path).unwrap();
-
-                    // Delete all the update files
-                    let update_dir_path = self
-                        .update_file_directory
-                        .join(format!("depth-{}", depth + 1))
-                        .join(format!("update-chunk-{chunk_idx}"));
-                    std::fs::remove_dir_all(update_dir_path).unwrap();
-                }
+                self.update_chunk(&mut chunk_bytes, chunk_idx, depth);
             }
 
             // Read the info files and count all new positions
