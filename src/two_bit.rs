@@ -177,6 +177,10 @@ impl<
         self.array_bytes() / self.chunk_size_bytes
     }
 
+    fn states_per_chunk(&self) -> usize {
+        self.chunk_size_bytes * 4
+    }
+
     /// Updates a chunk from depth `depth` to depth `depth + 1`
     fn update_chunk(
         &self,
@@ -200,10 +204,10 @@ impl<
         // Set current positions to old
         let current = if next == NEXT { CURRENT } else { NEXT };
         for byte in chunk_bytes.iter_mut() {
-            for i in 0..4 {
-                if (*byte >> (i * 2)) & 0b11 == current {
-                    let mask = 0b11 << (i * 2);
-                    *byte = (*byte & !mask) | OLD << (i * 2);
+            for bit_idx in (0..8).step_by(2) {
+                if (*byte >> bit_idx) & 0b11 == current {
+                    let mask = 0b11 << bit_idx;
+                    *byte = (*byte & !mask) | OLD << bit_idx;
                 }
             }
         }
@@ -236,13 +240,13 @@ impl<
                     }
 
                     let val = u64::from_le_bytes(buf);
-                    let (_, chunk_offset, byte_offset) = self.to_chunk_idx(val);
-                    let byte = chunk_bytes[chunk_offset];
+                    let (_, byte_idx, bit_idx) = self.node_to_bit_coords(val);
+                    let byte = chunk_bytes[byte_idx];
 
-                    if (byte >> (byte_offset * 2)) & 0b11 == UNSEEN {
-                        let mask = 0b11 << (byte_offset * 2);
-                        let new_byte = (byte & !mask) | next << (byte_offset * 2);
-                        chunk_bytes[chunk_offset] = new_byte;
+                    if (byte >> bit_idx) & 0b11 == UNSEEN {
+                        let mask = 0b11 << bit_idx;
+                        let new_byte = (byte & !mask) | next << bit_idx;
+                        chunk_bytes[byte_idx] = new_byte;
 
                         new_positions += 1;
                     }
@@ -310,17 +314,28 @@ impl<
         }
     }
 
-    /// Converts an encoded node value to (chunk_idx, chunk_offset, byte_offset)
-    fn to_chunk_idx(&self, encoded: u64) -> (usize, usize, usize) {
-        let encoded = encoded as usize;
-        let chunk_idx = (encoded / 4) / self.chunk_size_bytes;
-        let chunk_offset = (encoded / 4) % self.chunk_size_bytes;
-        let byte_offset = encoded % 4;
-        (chunk_idx, chunk_offset, byte_offset)
+    /// Converts an encoded node value to (chunk_idx, byte_idx, bit_idx)
+    fn node_to_bit_coords(&self, node: u64) -> (usize, usize, usize) {
+        let node = node as usize;
+        let chunk_idx = (node / 4) / self.chunk_size_bytes;
+        let byte_idx = (node / 4) % self.chunk_size_bytes;
+        let bit_idx = 2 * (node % 4);
+        (chunk_idx, byte_idx, bit_idx)
     }
 
-    fn from_chunk_idx(&self, chunk_idx: usize, chunk_offset: usize, byte_offset: usize) -> u64 {
-        (chunk_idx * self.chunk_size_bytes * 4 + chunk_offset * 4 + byte_offset) as u64
+    fn bit_coords_to_node(&self, chunk_idx: usize, byte_idx: usize, bit_idx: usize) -> u64 {
+        (chunk_idx * self.chunk_size_bytes * 4 + byte_idx * 4 + bit_idx / 2) as u64
+    }
+
+    /// Converts an encoded node value to (chunk_idx, chunk_offset)
+    fn node_to_chunk_coords(&self, node: u64) -> (usize, usize) {
+        let node = node as usize;
+        let n = self.states_per_chunk();
+        (node / n, (node % n))
+    }
+
+    fn chunk_coords_to_node(&self, chunk_idx: usize, chunk_offset: usize) -> u64 {
+        (chunk_idx * self.states_per_chunk() + chunk_offset) as u64
     }
 
     pub fn run(&self) {
@@ -382,27 +397,27 @@ impl<
             let mut chunk_bytes = vec![UNSEEN_BYTE; self.chunk_size_bytes];
 
             // Update values from `old`
-            for (_, chunk_offset, byte_offset) in old
+            for (_, byte_idx, bit_idx) in old
                 .iter()
-                .map(|&val| self.to_chunk_idx(val))
+                .map(|&val| self.node_to_bit_coords(val))
                 .filter(|&(i, _, _)| chunk_idx == i)
             {
-                let byte = chunk_bytes[chunk_offset];
-                let mask = 0b11 << (byte_offset * 2);
-                let new_byte = (byte & !mask) | OLD << (byte_offset * 2);
-                chunk_bytes[chunk_offset] = new_byte;
+                let byte = chunk_bytes[byte_idx];
+                let mask = 0b11 << bit_idx;
+                let new_byte = (byte & !mask) | OLD << bit_idx;
+                chunk_bytes[byte_idx] = new_byte;
             }
 
             // Update values from `next` and make them current
-            for (_, chunk_offset, byte_offset) in next
+            for (_, byte_idx, bit_idx) in next
                 .iter()
-                .map(|&val| self.to_chunk_idx(val))
+                .map(|&val| self.node_to_bit_coords(val))
                 .filter(|&(i, _, _)| chunk_idx == i)
             {
-                let byte = chunk_bytes[chunk_offset];
-                let mask = 0b11 << (byte_offset * 2);
-                let new_byte = (byte & !mask) | CURRENT << (byte_offset * 2);
-                chunk_bytes[chunk_offset] = new_byte;
+                let byte = chunk_bytes[byte_idx];
+                let mask = 0b11 << bit_idx;
+                let new_byte = (byte & !mask) | CURRENT << bit_idx;
+                chunk_bytes[byte_idx] = new_byte;
             }
 
             // Write the updated chunk to disk
@@ -463,16 +478,16 @@ impl<
                         }
                     }
 
-                    for byte_offset in 0..4 {
+                    for bit_idx in (0..8).step_by(2) {
                         let byte = chunk_bytes[chunk_offset];
-                        let val = (byte >> (byte_offset * 2)) & 0b11;
+                        let val = (byte >> bit_idx) & 0b11;
 
                         if val == current {
-                            let encoded = self.from_chunk_idx(chunk_idx, chunk_offset, byte_offset);
+                            let encoded = self.bit_coords_to_node(chunk_idx, chunk_offset, bit_idx);
                             self.decode(&mut state, encoded);
                             self.expand(&mut state, &mut expanded);
                             for node in expanded {
-                                let (idx, _, _) = self.to_chunk_idx(node);
+                                let (idx, _) = self.node_to_chunk_coords(node);
                                 update_sets[idx].insert(node);
                             }
                         }
