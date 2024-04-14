@@ -318,6 +318,27 @@ impl<
         }
     }
 
+    fn count_new_positions(&self, depth: usize) -> u64 {
+        let mut new_positions = 0;
+
+        for chunk_idx in 0..self.num_array_chunks() {
+            for i in 0..self.num_array_chunks() {
+                let info_file_path = self
+                    .info_directory
+                    .join(format!("depth-{depth}"))
+                    .join(format!("update-chunk-{chunk_idx}"))
+                    .join(format!("from-chunk-{i}.info"));
+                let mut info_file = File::open(info_file_path).unwrap();
+                let mut buf = [0u8; 8];
+                info_file.read_exact(&mut buf).unwrap();
+                let count = u64::from_le_bytes(buf);
+                new_positions += count;
+            }
+        }
+
+        new_positions
+    }
+
     /// Converts an encoded node value to (chunk_idx, chunk_offset, byte_offset)
     fn to_chunk_idx(&self, encoded: u64) -> (usize, usize, usize) {
         let encoded = encoded as usize;
@@ -554,22 +575,7 @@ impl<
             }
 
             // Read the info files and count all new positions
-            let mut new_positions = 0;
-
-            for chunk_idx in 0..self.num_array_chunks() {
-                for i in 0..self.num_array_chunks() {
-                    let info_file_path = self
-                        .info_directory
-                        .join(format!("depth-{}", depth + 1))
-                        .join(format!("update-chunk-{chunk_idx}"))
-                        .join(format!("from-chunk-{i}.info"));
-                    let mut info_file = File::open(info_file_path).unwrap();
-                    let mut buf = [0u8; 8];
-                    info_file.read_exact(&mut buf).unwrap();
-                    let count = u64::from_le_bytes(buf);
-                    new_positions += count;
-                }
-            }
+            let new_positions = self.count_new_positions(depth + 1);
 
             println!("depth {} new {new_positions}", depth + 1);
 
