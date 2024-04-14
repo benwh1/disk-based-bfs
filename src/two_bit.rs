@@ -22,7 +22,6 @@ pub struct TwoBitBfsBuilder<
     state_size: Option<u64>,
     array_file_directory: Option<PathBuf>,
     update_file_directory: Option<PathBuf>,
-    info_directory: Option<PathBuf>,
     initial_memory_limit: Option<usize>,
     phantom_t: PhantomData<T>,
 }
@@ -46,7 +45,6 @@ impl<
             state_size: None,
             array_file_directory: None,
             update_file_directory: None,
-            info_directory: None,
             initial_memory_limit: None,
             phantom_t: PhantomData,
         }
@@ -101,11 +99,6 @@ impl<
         self
     }
 
-    pub fn info_directory(mut self, info_directory: PathBuf) -> Self {
-        self.info_directory = Some(info_directory);
-        self
-    }
-
     pub fn initial_memory_limit(mut self, initial_memory_limit: usize) -> Self {
         self.initial_memory_limit = Some(initial_memory_limit);
         self
@@ -129,7 +122,6 @@ impl<
             state_size: self.state_size?,
             array_file_directory: self.array_file_directory?,
             update_file_directory: self.update_file_directory?,
-            info_directory: self.info_directory?,
             initial_memory_limit: self.initial_memory_limit?,
             phantom_t: PhantomData,
         })
@@ -157,7 +149,6 @@ pub struct TwoBitBfs<
     state_size: u64,
     array_file_directory: PathBuf,
     update_file_directory: PathBuf,
-    info_directory: PathBuf,
     initial_memory_limit: usize,
     phantom_t: PhantomData<T>,
 }
@@ -191,7 +182,13 @@ impl<
     }
 
     /// Updates a chunk from depth `depth` to depth `depth + 1`
-    fn update_chunk(&self, chunk_bytes: &mut [u8], chunk_idx: usize, depth: usize, next: u8) {
+    fn update_chunk(
+        &self,
+        chunk_bytes: &mut [u8],
+        chunk_idx: usize,
+        depth: usize,
+        next: u8,
+    ) -> u64 {
         // Read the chunk from disk
         let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
         let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
@@ -203,6 +200,8 @@ impl<
         assert_eq!(expected_size, actual_size as usize);
 
         file.read_exact(chunk_bytes).unwrap();
+
+        let mut new_positions = 0u64;
 
         for i in 0..self.num_array_chunks() {
             let file_path = self
@@ -217,8 +216,6 @@ impl<
             // Read 8 bytes at a time, and update the current chunk
             let mut buf = [0u8; 8];
             let mut entries = 0;
-
-            let mut new_positions = 0u64;
 
             while let Ok(bytes_read) = reader.read(&mut buf) {
                 if bytes_read == 0 {
@@ -241,20 +238,9 @@ impl<
             }
 
             assert_eq!(entries, expected_entries);
-
-            // Write info file containing number of new positions
-            let info_dir_path = self
-                .info_directory
-                .join(format!("depth-{}", depth + 1))
-                .join(format!("update-chunk-{chunk_idx}"));
-
-            std::fs::create_dir_all(&info_dir_path).unwrap();
-
-            let info_file_path = info_dir_path.join(format!("from-chunk-{i}.info"));
-
-            let mut info_file = File::create_new(info_file_path).unwrap();
-            info_file.write_all(&new_positions.to_le_bytes()).unwrap();
         }
+
+        println!("depth {} chunk {chunk_idx} new {new_positions}", depth + 1);
 
         // Write new chunk
         let new_chunk_dir = self
@@ -281,25 +267,6 @@ impl<
             .join(format!("depth-{}", depth + 1))
             .join(format!("update-chunk-{chunk_idx}"));
         std::fs::remove_dir_all(update_dir_path).unwrap();
-    }
-
-    fn count_new_positions(&self, depth: usize) -> u64 {
-        let mut new_positions = 0;
-
-        for chunk_idx in 0..self.num_array_chunks() {
-            for i in 0..self.num_array_chunks() {
-                let info_file_path = self
-                    .info_directory
-                    .join(format!("depth-{depth}"))
-                    .join(format!("update-chunk-{chunk_idx}"))
-                    .join(format!("from-chunk-{i}.info"));
-                let mut info_file = File::open(info_file_path).unwrap();
-                let mut buf = [0u8; 8];
-                info_file.read_exact(&mut buf).unwrap();
-                let count = u64::from_le_bytes(buf);
-                new_positions += count;
-            }
-        }
 
         new_positions
     }
@@ -479,13 +446,12 @@ impl<
                 }
             }
 
+            let mut new_positions = 0;
+
             // Read the update files and update the array chunks
             for chunk_idx in 0..self.num_array_chunks() {
-                self.update_chunk(&mut chunk_bytes, chunk_idx, depth, next);
+                new_positions += self.update_chunk(&mut chunk_bytes, chunk_idx, depth, next);
             }
-
-            // Read the info files and count all new positions
-            let new_positions = self.count_new_positions(depth + 1);
 
             println!("depth {} new {new_positions}", depth + 1);
 
