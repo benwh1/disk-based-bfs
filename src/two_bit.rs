@@ -337,10 +337,6 @@ impl<
         (node / n, (node % n) as u32)
     }
 
-    fn chunk_coords_to_node(&self, chunk_idx: usize, chunk_offset: u32) -> u64 {
-        (chunk_idx * self.states_per_chunk() + chunk_offset as usize) as u64
-    }
-
     fn chunk_offset_to_bit_coords(&self, chunk_offset: u32) -> (usize, usize) {
         let byte_idx = (chunk_offset / 4) as usize;
         let bit_idx = 2 * (chunk_offset % 4) as usize;
