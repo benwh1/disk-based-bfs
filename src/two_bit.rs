@@ -65,10 +65,6 @@ impl<
         self
     }
 
-    pub fn expansion_nodes(self, _: [(); EXPANSION_NODES]) -> Self {
-        self
-    }
-
     pub fn threads(mut self, threads: u64) -> Self {
         self.threads = threads;
         self
