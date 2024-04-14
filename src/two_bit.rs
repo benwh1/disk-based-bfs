@@ -317,6 +317,62 @@ impl<
         }
     }
 
+    fn expand_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize, current: u8) {
+        let mut state = self.initial_state.clone();
+        let mut expanded = [0u64; EXPANSION_NODES];
+
+        // Read the chunk from disk
+        let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
+        let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
+        let mut file = File::open(file_path).unwrap();
+
+        // Check that the file size is correct
+        let expected_size = self.chunk_size_bytes;
+        let actual_size = file.metadata().unwrap().len();
+        assert_eq!(expected_size, actual_size as usize);
+
+        file.read_exact(chunk_buffer).unwrap();
+
+        // Create update sets
+        let mut update_sets = vec![HashSet::<u32>::with_capacity(16384); self.num_array_chunks()];
+
+        // Expand current nodes
+        for chunk_offset in 0..self.chunk_size_bytes {
+            if chunk_offset % 256 == 0 {
+                // Check if any of the update sets may go over capacity
+                let max_new_nodes = 256 * EXPANSION_NODES;
+
+                for (idx, set) in update_sets.iter_mut().enumerate() {
+                    if set.len() + max_new_nodes > set.capacity() {
+                        // Possible to reach capacity on the next block of expansions, so
+                        // write update file to disk
+                        self.write_update_file(depth, idx, chunk_idx, set);
+                    }
+                }
+            }
+
+            for bit_idx in (0..8).step_by(2) {
+                let byte = chunk_buffer[chunk_offset];
+                let val = (byte >> bit_idx) & 0b11;
+
+                if val == current {
+                    let encoded = self.bit_coords_to_node(chunk_idx, chunk_offset, bit_idx);
+                    self.decode(&mut state, encoded);
+                    self.expand(&mut state, &mut expanded);
+                    for node in expanded {
+                        let (idx, offset) = self.node_to_chunk_coords(node);
+                        update_sets[idx].insert(offset);
+                    }
+                }
+            }
+        }
+
+        // Write remaining update files
+        for (idx, set) in update_sets.iter_mut().enumerate() {
+            self.write_update_file(depth, idx, chunk_idx, set);
+        }
+    }
+
     /// Converts an encoded node value to (chunk_idx, byte_idx, bit_idx)
     fn node_to_bit_coords(&self, node: u64) -> (usize, usize, usize) {
         let node = node as usize;
@@ -452,57 +508,7 @@ impl<
             };
 
             for chunk_idx in 0..self.num_array_chunks() {
-                // Read the chunk from disk
-                let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
-                let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
-                let mut file = File::open(file_path).unwrap();
-
-                // Check that the file size is correct
-                let expected_size = self.chunk_size_bytes;
-                let actual_size = file.metadata().unwrap().len();
-                assert_eq!(expected_size, actual_size as usize);
-
-                file.read_exact(&mut chunk_bytes).unwrap();
-
-                // Create update sets
-                let mut update_sets =
-                    vec![HashSet::<u32>::with_capacity(16384); self.num_array_chunks()];
-
-                // Expand current nodes
-                for chunk_offset in 0..self.chunk_size_bytes {
-                    if chunk_offset % 256 == 0 {
-                        // Check if any of the update sets may go over capacity
-                        let max_new_nodes = 256 * EXPANSION_NODES;
-
-                        for (idx, set) in update_sets.iter_mut().enumerate() {
-                            if set.len() + max_new_nodes > set.capacity() {
-                                // Possible to reach capacity on the next block of expansions, so
-                                // write update file to disk
-                                self.write_update_file(depth, idx, chunk_idx, set);
-                            }
-                        }
-                    }
-
-                    for bit_idx in (0..8).step_by(2) {
-                        let byte = chunk_bytes[chunk_offset];
-                        let val = (byte >> bit_idx) & 0b11;
-
-                        if val == current {
-                            let encoded = self.bit_coords_to_node(chunk_idx, chunk_offset, bit_idx);
-                            self.decode(&mut state, encoded);
-                            self.expand(&mut state, &mut expanded);
-                            for node in expanded {
-                                let (idx, offset) = self.node_to_chunk_coords(node);
-                                update_sets[idx].insert(offset);
-                            }
-                        }
-                    }
-                }
-
-                // Write remaining update files
-                for (idx, set) in update_sets.iter_mut().enumerate() {
-                    self.write_update_file(depth, idx, chunk_idx, set);
-                }
+                self.expand_chunk(&mut chunk_bytes, chunk_idx, depth, current);
             }
 
             let mut new_positions = 0;
