@@ -71,7 +71,10 @@ impl<
     }
 
     pub fn chunk_size_bytes(mut self, chunk_size_bytes: usize) -> Self {
-        self.chunk_size_bytes = Some(chunk_size_bytes);
+        // Limit to 2^30 bytes so that we can store 32 bit values in the update files
+        if chunk_size_bytes < 1 << 30 {
+            self.chunk_size_bytes = Some(chunk_size_bytes);
+        }
         self
     }
 
@@ -227,11 +230,11 @@ impl<
                 .map(|entry| entry.path())
             {
                 let file = File::open(file_path).unwrap();
-                let expected_entries = file.metadata().unwrap().len() / 8;
+                let expected_entries = file.metadata().unwrap().len() / 4;
                 let mut reader = BufReader::new(file);
 
-                // Read 8 bytes at a time, and update the current chunk
-                let mut buf = [0u8; 8];
+                // Read 4 bytes at a time, and update the current chunk
+                let mut buf = [0u8; 4];
                 let mut entries = 0;
 
                 while let Ok(bytes_read) = reader.read(&mut buf) {
@@ -239,8 +242,8 @@ impl<
                         break;
                     }
 
-                    let val = u64::from_le_bytes(buf);
-                    let (_, byte_idx, bit_idx) = self.node_to_bit_coords(val);
+                    let chunk_offset = u32::from_le_bytes(buf);
+                    let (byte_idx, bit_idx) = self.chunk_offset_to_bit_coords(chunk_offset);
                     let byte = chunk_bytes[byte_idx];
 
                     if (byte >> bit_idx) & 0b11 == UNSEEN {
@@ -294,7 +297,7 @@ impl<
         depth: usize,
         updated_chunk_idx: usize,
         from_chunk_idx: usize,
-        update_set: &mut HashSet<u64>,
+        update_set: &mut HashSet<u32>,
     ) {
         let dir_path = self
             .update_file_directory
@@ -328,14 +331,20 @@ impl<
     }
 
     /// Converts an encoded node value to (chunk_idx, chunk_offset)
-    fn node_to_chunk_coords(&self, node: u64) -> (usize, usize) {
+    fn node_to_chunk_coords(&self, node: u64) -> (usize, u32) {
         let node = node as usize;
         let n = self.states_per_chunk();
-        (node / n, (node % n))
+        (node / n, (node % n) as u32)
     }
 
-    fn chunk_coords_to_node(&self, chunk_idx: usize, chunk_offset: usize) -> u64 {
-        (chunk_idx * self.states_per_chunk() + chunk_offset) as u64
+    fn chunk_coords_to_node(&self, chunk_idx: usize, chunk_offset: u32) -> u64 {
+        (chunk_idx * self.states_per_chunk() + chunk_offset as usize) as u64
+    }
+
+    fn chunk_offset_to_bit_coords(&self, chunk_offset: u32) -> (usize, usize) {
+        let byte_idx = (chunk_offset / 4) as usize;
+        let bit_idx = 2 * (chunk_offset % 4) as usize;
+        (byte_idx, bit_idx)
     }
 
     pub fn run(&self) {
@@ -461,7 +470,7 @@ impl<
 
                 // Create update sets
                 let mut update_sets =
-                    vec![HashSet::<u64>::with_capacity(16384); self.num_array_chunks()];
+                    vec![HashSet::<u32>::with_capacity(16384); self.num_array_chunks()];
 
                 // Expand current nodes
                 for chunk_offset in 0..self.chunk_size_bytes {
@@ -487,8 +496,8 @@ impl<
                             self.decode(&mut state, encoded);
                             self.expand(&mut state, &mut expanded);
                             for node in expanded {
-                                let (idx, _) = self.node_to_chunk_coords(node);
-                                update_sets[idx].insert(node);
+                                let (idx, offset) = self.node_to_chunk_coords(node);
+                                update_sets[idx].insert(offset);
                             }
                         }
                     }
