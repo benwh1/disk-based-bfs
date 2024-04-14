@@ -305,21 +305,21 @@ impl<
 
             let mut info_file = File::create_new(info_file_path).unwrap();
             info_file.write_all(&new_positions.to_le_bytes()).unwrap();
-
-            // Delete the old chunk file
-            let old_chunk_path = self
-                .array_file_directory
-                .join(format!("depth-{depth}"))
-                .join(format!("chunk-{chunk_idx}.dat"));
-            std::fs::remove_file(old_chunk_path).unwrap();
-
-            // Delete all the update files
-            let update_dir_path = self
-                .update_file_directory
-                .join(format!("depth-{}", depth + 1))
-                .join(format!("update-chunk-{chunk_idx}"));
-            std::fs::remove_dir_all(update_dir_path).unwrap();
         }
+
+        // Delete the old chunk file
+        let old_chunk_path = self
+            .array_file_directory
+            .join(format!("depth-{depth}"))
+            .join(format!("chunk-{chunk_idx}.dat"));
+        std::fs::remove_file(old_chunk_path).unwrap();
+
+        // Delete all the update files
+        let update_dir_path = self
+            .update_file_directory
+            .join(format!("depth-{}", depth + 1))
+            .join(format!("update-chunk-{chunk_idx}"));
+        std::fs::remove_dir_all(update_dir_path).unwrap();
     }
 
     fn count_new_positions(&self, depth: usize) -> u64 {
