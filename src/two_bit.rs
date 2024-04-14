@@ -191,7 +191,7 @@ impl<
     }
 
     /// Updates a chunk from depth `depth` to depth `depth + 1`
-    fn update_chunk(&self, chunk_bytes: &mut [u8], chunk_idx: usize, depth: usize) {
+    fn update_chunk(&self, chunk_bytes: &mut [u8], chunk_idx: usize, depth: usize, next: u8) {
         // Read the chunk from disk
         let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
         let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
@@ -231,7 +231,7 @@ impl<
 
                 if byte >> (byte_offset * 2) == UNSEEN {
                     let mask = 0b11 << (byte_offset * 2);
-                    let new_byte = (byte & !mask) | NEXT << (byte_offset * 2);
+                    let new_byte = (byte & !mask) | next << (byte_offset * 2);
                     chunk_bytes[chunk_offset] = new_byte;
 
                     new_positions += 1;
@@ -414,7 +414,17 @@ impl<
 
         let mut chunk_bytes = vec![0u8; self.chunk_size_bytes];
 
+        // Because of how chunks get updated, the values of `NEXT` and `CURRENT` get swapped every
+        // iteration (see Korf's paper, in the paragraph "Eliminating the Conversion Scan").
+        let mut next_and_current_swapped = false;
+
         loop {
+            let (current, next) = if next_and_current_swapped {
+                (NEXT, CURRENT)
+            } else {
+                (CURRENT, NEXT)
+            };
+
             for chunk_idx in 0..self.num_array_chunks() {
                 // Read the chunk from disk
                 let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
@@ -451,7 +461,7 @@ impl<
                         let byte = chunk_bytes[chunk_offset];
                         let val = (byte >> (byte_offset * 2)) & 0b11;
 
-                        if val == CURRENT {
+                        if val == current {
                             let encoded = self.from_chunk_idx(chunk_idx, chunk_offset, byte_offset);
                             self.decode(&mut state, encoded);
                             self.expand(&mut state, &mut expanded);
@@ -471,7 +481,7 @@ impl<
 
             // Read the update files and update the array chunks
             for chunk_idx in 0..self.num_array_chunks() {
-                self.update_chunk(&mut chunk_bytes, chunk_idx, depth);
+                self.update_chunk(&mut chunk_bytes, chunk_idx, depth, next);
             }
 
             // Read the info files and count all new positions
@@ -484,6 +494,7 @@ impl<
             }
 
             depth += 1;
+            next_and_current_swapped = !next_and_current_swapped;
         }
     }
 }
