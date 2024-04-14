@@ -204,40 +204,47 @@ impl<
         let mut new_positions = 0u64;
 
         for i in 0..self.num_array_chunks() {
-            let file_path = self
+            let dir_path = self
                 .update_file_directory
                 .join(format!("depth-{}", depth + 1))
                 .join(format!("update-chunk-{chunk_idx}"))
-                .join(format!("from-chunk-{i}.dat"));
-            let file = File::open(file_path).unwrap();
-            let expected_entries = file.metadata().unwrap().len() / 8;
-            let mut reader = BufReader::new(file);
+                .join(format!("from-chunk-{i}"));
 
-            // Read 8 bytes at a time, and update the current chunk
-            let mut buf = [0u8; 8];
-            let mut entries = 0;
+            for file_path in std::fs::read_dir(&dir_path)
+                .unwrap()
+                .flatten()
+                .map(|entry| entry.path())
+            {
+                let file = File::open(file_path).unwrap();
+                let expected_entries = file.metadata().unwrap().len() / 8;
+                let mut reader = BufReader::new(file);
 
-            while let Ok(bytes_read) = reader.read(&mut buf) {
-                if bytes_read == 0 {
-                    break;
+                // Read 8 bytes at a time, and update the current chunk
+                let mut buf = [0u8; 8];
+                let mut entries = 0;
+
+                while let Ok(bytes_read) = reader.read(&mut buf) {
+                    if bytes_read == 0 {
+                        break;
+                    }
+
+                    let val = u64::from_le_bytes(buf);
+                    let (_, chunk_offset, byte_offset) = self.to_chunk_idx(val);
+                    let byte = chunk_bytes[chunk_offset];
+
+                    if byte >> (byte_offset * 2) == UNSEEN {
+                        let mask = 0b11 << (byte_offset * 2);
+                        let new_byte = (byte & !mask) | next << (byte_offset * 2);
+                        chunk_bytes[chunk_offset] = new_byte;
+
+                        new_positions += 1;
+                    }
+
+                    entries += 1;
                 }
 
-                let val = u64::from_le_bytes(buf);
-                let (_, chunk_offset, byte_offset) = self.to_chunk_idx(val);
-                let byte = chunk_bytes[chunk_offset];
-
-                if byte >> (byte_offset * 2) == UNSEEN {
-                    let mask = 0b11 << (byte_offset * 2);
-                    let new_byte = (byte & !mask) | next << (byte_offset * 2);
-                    chunk_bytes[chunk_offset] = new_byte;
-
-                    new_positions += 1;
-                }
-
-                entries += 1;
+                assert_eq!(entries, expected_entries);
             }
-
-            assert_eq!(entries, expected_entries);
         }
 
         println!("depth {} chunk {chunk_idx} new {new_positions}", depth + 1);
@@ -269,6 +276,31 @@ impl<
         std::fs::remove_dir_all(update_dir_path).unwrap();
 
         new_positions
+    }
+
+    fn write_update_file(
+        &self,
+        depth: usize,
+        updated_chunk_idx: usize,
+        from_chunk_idx: usize,
+        update_set: &mut HashSet<u64>,
+    ) {
+        let dir_path = self
+            .update_file_directory
+            .join(format!("depth-{}", depth + 1))
+            .join(format!("update-chunk-{updated_chunk_idx}"))
+            .join(format!("from-chunk-{from_chunk_idx}"));
+
+        std::fs::create_dir_all(&dir_path).unwrap();
+
+        let part = std::fs::read_dir(&dir_path).unwrap().flatten().count();
+        let file_path = dir_path.join(format!("part-{}.dat", part));
+        let file = File::create_new(file_path).unwrap();
+        let mut writer = BufWriter::new(file);
+
+        for val in update_set.drain() {
+            writer.write(&val.to_le_bytes()).unwrap();
+        }
     }
 
     /// Converts an encoded node value to (chunk_idx, chunk_offset, byte_offset)
@@ -405,25 +437,25 @@ impl<
 
                 file.read_exact(&mut chunk_bytes).unwrap();
 
-                // Create update files
-                let mut update_files = (0..self.num_array_chunks())
-                    .map(|i| {
-                        let dir_path = self
-                            .update_file_directory
-                            .join(format!("depth-{}", depth + 1))
-                            .join(format!("update-chunk-{i}"));
-
-                        std::fs::create_dir_all(&dir_path).unwrap();
-
-                        let file_path = dir_path.join(format!("from-chunk-{chunk_idx}.dat"));
-                        let file = File::create_new(file_path).unwrap();
-
-                        BufWriter::new(file)
-                    })
-                    .collect::<Vec<_>>();
+                // Create update sets
+                let mut update_sets =
+                    vec![HashSet::<u64>::with_capacity(16384); self.num_array_chunks()];
 
                 // Expand current nodes
                 for chunk_offset in 0..self.chunk_size_bytes {
+                    if chunk_offset % 256 == 0 {
+                        // Check if any of the update sets may go over capacity
+                        let max_new_nodes = 256 * EXPANSION_NODES;
+
+                        for (idx, set) in update_sets.iter_mut().enumerate() {
+                            if set.len() + max_new_nodes > set.capacity() {
+                                // Possible to reach capacity on the next block of expansions, so
+                                // write update file to disk
+                                self.write_update_file(depth, idx, chunk_idx, set);
+                            }
+                        }
+                    }
+
                     for byte_offset in 0..4 {
                         let byte = chunk_bytes[chunk_offset];
                         let val = (byte >> (byte_offset * 2)) & 0b11;
@@ -434,7 +466,7 @@ impl<
                             self.expand(&mut state, &mut expanded);
                             for node in expanded {
                                 let (chunk_idx, _, _) = self.to_chunk_idx(node);
-                                update_files[chunk_idx].write(&node.to_le_bytes()).unwrap();
+                                update_sets[chunk_idx].insert(node);
                             }
 
                             // Set the val to `OLD` after expanding
@@ -443,6 +475,11 @@ impl<
                             chunk_bytes[chunk_offset] = new_byte;
                         }
                     }
+                }
+
+                // Write remaining update files
+                for (idx, set) in update_sets.iter_mut().enumerate() {
+                    self.write_update_file(depth, idx, chunk_idx, set);
                 }
             }
 
