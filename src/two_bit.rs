@@ -195,24 +195,14 @@ impl<
             let start_idx = chunk * self.chunk_size_bytes * 4;
             let end_idx = (chunk + 1) * self.chunk_size_bytes * 4;
 
-            let dir_name = format!("next-chunk-{chunk}");
-            let dir = self.update_file_directory.join(dir_name);
-            std::fs::create_dir_all(&dir).unwrap();
+            let dir_path = self
+                .update_file_directory
+                .join(format!("next-chunk-{chunk}"));
+            std::fs::create_dir_all(&dir_path).unwrap();
 
-            let part = dir
-                .read_dir()
-                .unwrap()
-                .flatten()
-                .filter(|e| {
-                    e.file_name()
-                        .to_str()
-                        .map_or(false, |s| s.starts_with("part-"))
-                })
-                .count()
-                + 1;
-
-            let path = dir.join(format!("part-{part}.dat"));
-            let update_file = File::create_new(path).unwrap();
+            let part = dir_path.read_dir().unwrap().flatten().count() + 1;
+            let file_path = dir_path.join(format!("part-{part}.dat"));
+            let update_file = File::create_new(file_path).unwrap();
             let mut writer = BufWriter::new(update_file);
 
             for &val in next
@@ -231,7 +221,7 @@ impl<
     /// Updates a chunk from depth `depth` to depth `depth + 1`
     fn update_chunk(&self, chunk_bytes: &mut [u8], chunk_idx: usize, depth: usize) {
         // Read the chunk from disk
-        let dir_path = self.update_file_directory.join(format!("depth-{depth}"));
+        let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
         let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
         let mut file = File::open(file_path).unwrap();
 
@@ -531,7 +521,7 @@ impl<
         loop {
             for chunk_idx in 0..self.num_array_chunks() {
                 // Read the chunk from disk
-                let dir_path = self.update_file_directory.join(format!("depth-{depth}"));
+                let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
                 let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
                 let mut file = File::open(file_path).unwrap();
                 let bytes_read = file.read_to_end(&mut chunk_bytes).unwrap();
