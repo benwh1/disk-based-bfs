@@ -190,34 +190,6 @@ impl<
         self.array_bytes() / self.chunk_size_bytes
     }
 
-    fn write_next(&self, next: &mut HashSet<u64>) {
-        for chunk in 0..self.num_array_chunks() {
-            let start_idx = chunk * self.chunk_size_bytes * 4;
-            let end_idx = (chunk + 1) * self.chunk_size_bytes * 4;
-
-            let dir_path = self
-                .update_file_directory
-                .join(format!("next-chunk-{chunk}"));
-            std::fs::create_dir_all(&dir_path).unwrap();
-
-            let part = dir_path.read_dir().unwrap().flatten().count() + 1;
-            let file_path = dir_path.join(format!("part-{part}.dat"));
-            let update_file = File::create_new(file_path).unwrap();
-            let mut writer = BufWriter::new(update_file);
-
-            for &val in next
-                .iter()
-                .filter(|&&val| (start_idx..end_idx).contains(&(val as usize)))
-            {
-                writer.write(&val.to_le_bytes()).unwrap();
-            }
-
-            writer.flush().unwrap();
-        }
-
-        next.clear();
-    }
-
     /// Updates a chunk from depth `depth` to depth `depth + 1`
     fn update_chunk(&self, chunk_bytes: &mut [u8], chunk_idx: usize, depth: usize) {
         // Read the chunk from disk
@@ -362,52 +334,11 @@ impl<
         let mut new;
         let mut total = 1;
 
-        let mut should_break = false;
-        let mut shrunk_old = false;
 
         loop {
             new = 0;
 
-            const ITER_GROUP_SIZE: usize = 1 << 20;
-            for (idx, &encoded) in current.iter().enumerate() {
-                if idx % ITER_GROUP_SIZE == 0 {
-                    // The maximum number of nodes that may be added in the next iteration
-                    let next_nodes = ITER_GROUP_SIZE * EXPANSION_NODES;
-
-                    let may_exceed_capacity = next.len() + next_nodes > next.capacity();
-
-                    if may_exceed_capacity {
-                        if shrunk_old {
-                            self.write_next(&mut next);
-
-                            // This should be the last iteration of in-memory BFS
-                            should_break = true;
-                        } else {
-                            // Shrink `old` to make space for `next`
-                            old.shrink_to_fit();
-
-                            next.reserve(
-                                max_capacity
-                                    - next.capacity()
-                                    - old.capacity()
-                                    - current.capacity(),
-                            );
-
-                            shrunk_old = true;
-
-                            // Check if we will *still* run out of memory
-                            let may_exceed_capacity = next.len() + next_nodes > next.capacity();
-
-                            if may_exceed_capacity {
-                                self.write_next(&mut next);
-
-                                // This should be the last iteration of in-memory BFS
-                                should_break = true;
-                            }
-                        }
-                    }
-                }
-
+            for &encoded in &current {
                 self.decode(&mut state, encoded);
                 self.expand(&mut state, &mut expanded);
                 for node in expanded {
@@ -428,18 +359,7 @@ impl<
                 return;
             }
 
-            // Out of memory, we need to continue BFS using disk
-            if should_break {
-                self.write_next(&mut next);
-                drop(next);
-
-                for val in current.drain() {
-                    old.insert(val);
-                }
-                drop(current);
-
-                old.shrink_to_fit();
-
+            if total > max_capacity {
                 break;
             }
 
@@ -467,40 +387,16 @@ impl<
                 chunk_bytes[chunk_offset] = new_byte;
             }
 
-            // Read `next` values from disk and update the array (and make them `current`)
-            for next_file_path in self
-                .update_file_directory
-                .join(format!("next-chunk-{chunk_idx}"))
-                .read_dir()
-                .unwrap()
-                .flatten()
-                .map(|e| e.path())
-                .collect::<Vec<_>>()
+            // Update values from `next` and make them current
+            for (_, chunk_offset, byte_offset) in next
+                .iter()
+                .map(|&val| self.to_chunk_idx(val))
+                .filter(|&(i, _, _)| chunk_idx == i)
             {
-                let file = File::open(next_file_path).unwrap();
-                let expected_entries = file.metadata().unwrap().len() / 8;
-
-                let mut reader = BufReader::new(file);
-                let mut buf = [0u8; 8];
-
-                let mut entries = 0;
-
-                while let Ok(bytes_read) = reader.read(&mut buf) {
-                    if bytes_read == 0 {
-                        break;
-                    }
-
-                    let val = u64::from_le_bytes(buf);
-                    let (_, chunk_offset, byte_offset) = self.to_chunk_idx(val);
-                    let byte = chunk_bytes[chunk_offset];
-                    let mask = 0b11 << (byte_offset * 2);
-                    let new_byte = (byte & !mask) | CURRENT << (byte_offset * 2);
-                    chunk_bytes[chunk_offset] = new_byte;
-
-                    entries += 1;
-                }
-
-                assert_eq!(entries, expected_entries);
+                let byte = chunk_bytes[chunk_offset];
+                let mask = 0b11 << (byte_offset * 2);
+                let new_byte = (byte & !mask) | CURRENT << (byte_offset * 2);
+                chunk_bytes[chunk_offset] = new_byte;
             }
 
             // Write the updated chunk to disk
