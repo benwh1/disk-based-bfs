@@ -197,8 +197,6 @@ impl<
 
             let dir_name = format!("next-chunk-{chunk}");
             let dir = self.update_file_directory.join(dir_name);
-
-            // Create the directory if it doesn't exist
             std::fs::create_dir_all(&dir).unwrap();
 
             let part = dir
@@ -213,9 +211,7 @@ impl<
                 .count()
                 + 1;
 
-            let file_name = format!("part-{part}.dat");
-            let path = dir.join(file_name);
-
+            let path = dir.join(format!("part-{part}.dat"));
             let update_file = File::create_new(path).unwrap();
             let mut writer = BufWriter::new(update_file);
 
@@ -286,19 +282,27 @@ impl<
             assert_eq!(entries, expected_entries);
 
             // Write new chunk
-            let new_chunk_path = self
+            let new_chunk_dir = self
                 .array_file_directory
-                .join(format!("depth-{}", depth + 1))
-                .join(format!("chunk-{chunk_idx}.dat"));
+                .join(format!("depth-{}", depth + 1));
+
+            std::fs::create_dir_all(&new_chunk_dir).unwrap();
+
+            let new_chunk_path = new_chunk_dir.join(format!("chunk-{chunk_idx}.dat"));
             let mut new_chunk_file = File::create_new(new_chunk_path).unwrap();
+
             new_chunk_file.write_all(&chunk_bytes).unwrap();
 
             // Write info file containing number of new positions
-            let info_file_path = self
+            let info_dir_path = self
                 .info_directory
                 .join(format!("depth-{}", depth + 1))
-                .join(format!("update-chunk-{chunk_idx}"))
-                .join(format!("from-chunk-{i}.info"));
+                .join(format!("update-chunk-{chunk_idx}"));
+
+            std::fs::create_dir_all(&info_dir_path).unwrap();
+
+            let info_file_path = info_dir_path.join(format!("from-chunk-{i}.info"));
+
             let mut info_file = File::create_new(info_file_path).unwrap();
             info_file.write_all(&new_positions.to_le_bytes()).unwrap();
 
@@ -510,9 +514,11 @@ impl<
             }
 
             // Write the updated chunk to disk
-            let file_name = format!("chunk-{chunk_idx}-depth-{depth}.dat");
-            let file_path = self.array_file_directory.join(file_name);
-            let mut file = File::create(file_path).unwrap();
+            let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
+            std::fs::create_dir_all(&dir_path).unwrap();
+
+            let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
+            let mut file = File::create_new(file_path).unwrap();
             file.write_all(&chunk_bytes).unwrap();
         }
 
@@ -535,12 +541,16 @@ impl<
                 // Create update files
                 let mut update_files = (0..self.num_array_chunks())
                     .map(|i| {
-                        let file_path = self
+                        let dir_path = self
                             .update_file_directory
                             .join(format!("depth-{}", depth + 1))
-                            .join(format!("update-chunk-{i}"))
-                            .join(format!("from-chunk-{chunk_idx}.dat"));
+                            .join(format!("update-chunk-{i}"));
+
+                        std::fs::create_dir_all(&dir_path).unwrap();
+
+                        let file_path = dir_path.join(format!("from-chunk-{chunk_idx}.dat"));
                         let file = File::create_new(file_path).unwrap();
+
                         BufWriter::new(file)
                     })
                     .collect::<Vec<_>>();
