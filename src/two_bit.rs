@@ -232,7 +232,6 @@ impl<
 
         file.read_exact(chunk_bytes).unwrap();
 
-        // Iterate over update files
         for i in 0..self.num_array_chunks() {
             let file_path = self
                 .update_file_directory
@@ -271,18 +270,6 @@ impl<
 
             assert_eq!(entries, expected_entries);
 
-            // Write new chunk
-            let new_chunk_dir = self
-                .array_file_directory
-                .join(format!("depth-{}", depth + 1));
-
-            std::fs::create_dir_all(&new_chunk_dir).unwrap();
-
-            let new_chunk_path = new_chunk_dir.join(format!("chunk-{chunk_idx}.dat"));
-            let mut new_chunk_file = File::create_new(new_chunk_path).unwrap();
-
-            new_chunk_file.write_all(&chunk_bytes).unwrap();
-
             // Write info file containing number of new positions
             let info_dir_path = self
                 .info_directory
@@ -296,6 +283,18 @@ impl<
             let mut info_file = File::create_new(info_file_path).unwrap();
             info_file.write_all(&new_positions.to_le_bytes()).unwrap();
         }
+
+        // Write new chunk
+        let new_chunk_dir = self
+            .array_file_directory
+            .join(format!("depth-{}", depth + 1));
+
+        std::fs::create_dir_all(&new_chunk_dir).unwrap();
+
+        let new_chunk_path = new_chunk_dir.join(format!("chunk-{chunk_idx}.dat"));
+        let mut new_chunk_file = File::create_new(new_chunk_path).unwrap();
+
+        new_chunk_file.write_all(&chunk_bytes).unwrap();
 
         // Delete the old chunk file
         let old_chunk_path = self
