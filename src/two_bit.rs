@@ -524,9 +524,13 @@ impl<
                 let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
                 let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
                 let mut file = File::open(file_path).unwrap();
-                let bytes_read = file.read_to_end(&mut chunk_bytes).unwrap();
 
-                assert_eq!(bytes_read, self.chunk_size_bytes);
+                // Check that the file size is correct
+                let expected_size = self.chunk_size_bytes;
+                let actual_size = file.metadata().unwrap().len();
+                assert_eq!(expected_size, actual_size as usize);
+
+                file.read_exact(&mut chunk_bytes).unwrap();
 
                 // Create update files
                 let mut update_files = (0..self.num_array_chunks())
