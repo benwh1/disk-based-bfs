@@ -451,7 +451,7 @@ impl<
         let mut expanded = [0u64; EXPANSION_NODES];
         let mut depth = 0;
 
-        current.insert(self.encode(&state));
+        current.insert(self.initial_state);
 
         let mut new;
         let mut total = 1;
