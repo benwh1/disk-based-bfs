@@ -195,8 +195,9 @@ impl<
         std::fs::create_dir_all(&dir_path).unwrap();
 
         let part = std::fs::read_dir(&dir_path).unwrap().flatten().count();
-        let file_path = dir_path.join(format!("part-{}.dat", part));
-        let file = File::create_new(file_path).unwrap();
+
+        let file_path_tmp = dir_path.join(format!("part-{}.dat.tmp", part));
+        let file = File::create_new(&file_path_tmp).unwrap();
         let mut writer = BufWriter::new(file);
 
         for val in update_set.drain() {
@@ -204,6 +205,11 @@ impl<
                 panic!("failed to write to update file");
             }
         }
+
+        drop(writer);
+
+        let file_path = dir_path.join(format!("part-{}.dat", part));
+        std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
     fn read_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) {
@@ -348,10 +354,14 @@ impl<
 
         std::fs::create_dir_all(&new_chunk_dir).unwrap();
 
-        let new_chunk_path = new_chunk_dir.join(format!("chunk-{chunk_idx}.dat"));
-        let mut new_chunk_file = File::create_new(new_chunk_path).unwrap();
+        let new_chunk_path_tmp = new_chunk_dir.join(format!("chunk-{chunk_idx}.dat.tmp"));
+        let mut new_chunk_file = File::create_new(&new_chunk_path_tmp).unwrap();
 
         new_chunk_file.write_all(chunk_buffer).unwrap();
+        drop(new_chunk_file);
+
+        let new_chunk_path = new_chunk_dir.join(format!("chunk-{chunk_idx}.dat"));
+        std::fs::rename(new_chunk_path_tmp, new_chunk_path).unwrap();
 
         // Delete the old chunk file
         let old_chunk_path = self
@@ -495,9 +505,14 @@ impl<
             let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
             std::fs::create_dir_all(&dir_path).unwrap();
 
-            let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
-            let mut file = File::create_new(file_path).unwrap();
+            let file_path_tmp = dir_path.join(format!("chunk-{chunk_idx}.dat.tmp"));
+            let mut file = File::create_new(&file_path_tmp).unwrap();
+
             file.write_all(&chunk_bytes).unwrap();
+            drop(file);
+
+            let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
+            std::fs::rename(file_path_tmp, file_path).unwrap();
         }
 
         drop(old);
