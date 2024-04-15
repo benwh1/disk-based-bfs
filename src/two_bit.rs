@@ -32,10 +32,23 @@ impl<
         Decoder: Fn(&mut T, u64) + Sync,
         Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
         const EXPANSION_NODES: usize,
+    > Default for TwoBitBfsBuilder<T, Encoder, Decoder, Expander, EXPANSION_NODES>
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<
+        T: Clone + Sync,
+        Encoder: Fn(&T) -> u64 + Sync,
+        Decoder: Fn(&mut T, u64) + Sync,
+        Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
+        const EXPANSION_NODES: usize,
     > TwoBitBfsBuilder<T, Encoder, Decoder, Expander, EXPANSION_NODES>
 {
     pub fn new() -> Self {
-        TwoBitBfsBuilder {
+        Self {
             encoder: None,
             decoder: None,
             expander: None,
@@ -273,7 +286,7 @@ impl<
         let new_chunk_path = new_chunk_dir.join(format!("chunk-{chunk_idx}.dat"));
         let mut new_chunk_file = File::create_new(new_chunk_path).unwrap();
 
-        new_chunk_file.write_all(&chunk_bytes).unwrap();
+        new_chunk_file.write_all(chunk_bytes).unwrap();
 
         // Delete the old chunk file
         let old_chunk_path = self
@@ -313,7 +326,9 @@ impl<
         let mut writer = BufWriter::new(file);
 
         for val in update_set.drain() {
-            writer.write(&val.to_le_bytes()).unwrap();
+            if writer.write(&val.to_le_bytes()).unwrap() != 4 {
+                panic!("failed to write to update file");
+            }
         }
     }
 
@@ -337,7 +352,7 @@ impl<
         let mut update_sets = vec![HashSet::<u32>::with_capacity(16384); self.num_array_chunks()];
 
         // Expand current nodes
-        for chunk_offset in 0..self.chunk_size_bytes {
+        for (chunk_offset, byte) in chunk_buffer.iter().enumerate() {
             if chunk_offset % 256 == 0 {
                 // Check if any of the update sets may go over capacity
                 let max_new_nodes = 256 * EXPANSION_NODES;
@@ -352,7 +367,6 @@ impl<
             }
 
             for bit_idx in (0..8).step_by(2) {
-                let byte = chunk_buffer[chunk_offset];
                 let val = (byte >> bit_idx) & 0b11;
 
                 if val == current {
@@ -425,10 +439,8 @@ impl<
                 self.decode(&mut state, encoded);
                 self.expand(&mut state, &mut expanded);
                 for node in expanded {
-                    if !old.contains(&node) && !current.contains(&node) {
-                        if next.insert(node) {
-                            new += 1;
-                        }
+                    if !old.contains(&node) && !current.contains(&node) && next.insert(node) {
+                        new += 1;
                     }
                 }
             }
