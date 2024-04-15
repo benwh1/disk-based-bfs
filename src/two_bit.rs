@@ -215,8 +215,34 @@ impl<
         self.chunk_size_bytes * 4
     }
 
-    /// Updates a chunk from depth `depth` to depth `depth + 1`
-    fn update_chunk(&self, chunk_bytes: &mut [u8], chunk_idx: usize, depth: usize) -> u64 {
+    fn write_update_file(
+        &self,
+        depth: usize,
+        updated_chunk_idx: usize,
+        from_chunk_idx: usize,
+        update_set: &mut HashSet<u32>,
+    ) {
+        let dir_path = self
+            .update_file_directory
+            .join(format!("depth-{}", depth + 1))
+            .join(format!("update-chunk-{updated_chunk_idx}"))
+            .join(format!("from-chunk-{from_chunk_idx}"));
+
+        std::fs::create_dir_all(&dir_path).unwrap();
+
+        let part = std::fs::read_dir(&dir_path).unwrap().flatten().count();
+        let file_path = dir_path.join(format!("part-{}.dat", part));
+        let file = File::create_new(file_path).unwrap();
+        let mut writer = BufWriter::new(file);
+
+        for val in update_set.drain() {
+            if writer.write(&val.to_le_bytes()).unwrap() != 4 {
+                panic!("failed to write to update file");
+            }
+        }
+    }
+
+    fn read_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) {
         // Read the chunk from disk
         let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
         let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
@@ -227,8 +253,10 @@ impl<
         let actual_size = file.metadata().unwrap().len();
         assert_eq!(expected_size, actual_size as usize);
 
-        file.read_exact(chunk_bytes).unwrap();
+        file.read_exact(chunk_buffer).unwrap();
+    }
 
+    fn update_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) -> u64 {
         let (current, next) = if depth % 2 == 0 {
             (CURRENT, NEXT)
         } else {
@@ -236,7 +264,7 @@ impl<
         };
 
         // Set current positions to old
-        for byte in chunk_bytes.iter_mut() {
+        for byte in chunk_buffer.iter_mut() {
             for bit_idx in (0..8).step_by(2) {
                 if (*byte >> bit_idx) & 0b11 == current {
                     let mask = 0b11 << bit_idx;
@@ -274,12 +302,12 @@ impl<
 
                     let chunk_offset = u32::from_le_bytes(buf);
                     let (byte_idx, bit_idx) = self.chunk_offset_to_bit_coords(chunk_offset);
-                    let byte = chunk_bytes[byte_idx];
+                    let byte = chunk_buffer[byte_idx];
 
                     if (byte >> bit_idx) & 0b11 == UNSEEN {
                         let mask = 0b11 << bit_idx;
                         let new_byte = (byte & !mask) | next << bit_idx;
-                        chunk_bytes[byte_idx] = new_byte;
+                        chunk_buffer[byte_idx] = new_byte;
 
                         new_positions += 1;
                     }
@@ -291,79 +319,12 @@ impl<
             }
         }
 
-        tracing::info!("depth {} chunk {chunk_idx} new {new_positions}", depth + 1);
-
-        // Write new chunk
-        let new_chunk_dir = self
-            .array_file_directory
-            .join(format!("depth-{}", depth + 1));
-
-        std::fs::create_dir_all(&new_chunk_dir).unwrap();
-
-        let new_chunk_path = new_chunk_dir.join(format!("chunk-{chunk_idx}.dat"));
-        let mut new_chunk_file = File::create_new(new_chunk_path).unwrap();
-
-        new_chunk_file.write_all(chunk_bytes).unwrap();
-
-        // Delete the old chunk file
-        let old_chunk_path = self
-            .array_file_directory
-            .join(format!("depth-{depth}"))
-            .join(format!("chunk-{chunk_idx}.dat"));
-        std::fs::remove_file(old_chunk_path).unwrap();
-
-        // Delete all the update files
-        let update_dir_path = self
-            .update_file_directory
-            .join(format!("depth-{}", depth + 1))
-            .join(format!("update-chunk-{chunk_idx}"));
-        std::fs::remove_dir_all(update_dir_path).unwrap();
-
         new_positions
-    }
-
-    fn write_update_file(
-        &self,
-        depth: usize,
-        updated_chunk_idx: usize,
-        from_chunk_idx: usize,
-        update_set: &mut HashSet<u32>,
-    ) {
-        let dir_path = self
-            .update_file_directory
-            .join(format!("depth-{}", depth + 1))
-            .join(format!("update-chunk-{updated_chunk_idx}"))
-            .join(format!("from-chunk-{from_chunk_idx}"));
-
-        std::fs::create_dir_all(&dir_path).unwrap();
-
-        let part = std::fs::read_dir(&dir_path).unwrap().flatten().count();
-        let file_path = dir_path.join(format!("part-{}.dat", part));
-        let file = File::create_new(file_path).unwrap();
-        let mut writer = BufWriter::new(file);
-
-        for val in update_set.drain() {
-            if writer.write(&val.to_le_bytes()).unwrap() != 4 {
-                panic!("failed to write to update file");
-            }
-        }
     }
 
     fn expand_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) {
         let mut state = self.initial_state.clone();
         let mut expanded = [0u64; EXPANSION_NODES];
-
-        // Read the chunk from disk
-        let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
-        let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
-        let mut file = File::open(file_path).unwrap();
-
-        // Check that the file size is correct
-        let expected_size = self.chunk_size_bytes;
-        let actual_size = file.metadata().unwrap().len();
-        assert_eq!(expected_size, actual_size as usize);
-
-        file.read_exact(chunk_buffer).unwrap();
 
         // Create update sets
         let mut update_sets =
@@ -404,6 +365,52 @@ impl<
         for (idx, set) in update_sets.iter_mut().enumerate() {
             self.write_update_file(depth, idx, chunk_idx, set);
         }
+    }
+
+    fn update_and_expand_chunk(
+        &self,
+        chunk_buffer: &mut [u8],
+        chunk_idx: usize,
+        depth: usize,
+    ) -> u64 {
+        self.read_chunk(chunk_buffer, chunk_idx, depth);
+        let new_positions = self.update_chunk(chunk_buffer, chunk_idx, depth);
+        tracing::info!("depth {depth} chunk {chunk_idx} new {new_positions}");
+        self.expand_chunk(chunk_buffer, chunk_idx, depth + 1);
+
+        // Write new chunk
+        let new_chunk_dir = self
+            .array_file_directory
+            .join(format!("depth-{}", depth + 1));
+
+        std::fs::create_dir_all(&new_chunk_dir).unwrap();
+
+        let new_chunk_path = new_chunk_dir.join(format!("chunk-{chunk_idx}.dat"));
+        let mut new_chunk_file = File::create_new(new_chunk_path).unwrap();
+
+        new_chunk_file.write_all(chunk_buffer).unwrap();
+
+        // Delete the old chunk file
+        let old_chunk_path = self
+            .array_file_directory
+            .join(format!("depth-{depth}"))
+            .join(format!("chunk-{chunk_idx}.dat"));
+
+        if old_chunk_path.exists() {
+            std::fs::remove_file(old_chunk_path).unwrap();
+        }
+
+        // Delete the old update files
+        let update_dir_path = self
+            .update_file_directory
+            .join(format!("depth-{}", depth + 1))
+            .join(format!("update-chunk-{chunk_idx}"));
+
+        if update_dir_path.exists() {
+            std::fs::remove_dir_all(update_dir_path).unwrap();
+        }
+
+        new_positions
     }
 
     /// Converts an encoded node value to (chunk_idx, byte_idx, bit_idx)
@@ -533,6 +540,37 @@ impl<
 
         // Continue with BFS using disk
 
+        // Before the first iteration on disk, we need to create update files. Every iteration
+        // beyond the first (part of the `loop` below) will first read the update files and then
+        // expand nodes and create new update files for the next depth, but at this point we don't
+        // have any update files to read from.
+
+        std::thread::scope(|s| {
+            // Expand chunks
+            let threads = (0..self.threads as usize)
+                .map(|thread_idx| {
+                    s.spawn(move || {
+                        let mut chunk_bytes = vec![0u8; self.chunk_size_bytes];
+
+                        for chunk_idx in (0..self.num_array_chunks())
+                            .skip(thread_idx)
+                            .step_by(self.threads as usize)
+                        {
+                            tracing::info!("[Thread {thread_idx}] creating initial update files for {chunk_idx} depth {depth}");
+                            self.read_chunk(&mut chunk_bytes, chunk_idx, depth);
+                            self.expand_chunk(
+                                &mut chunk_bytes,
+                                chunk_idx,
+                                depth,
+                            );
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            threads.into_iter().for_each(|t| t.join().unwrap());
+        });
+
         loop {
             let new_positions = std::thread::scope(|s| {
                 // Expand chunks
@@ -541,34 +579,17 @@ impl<
                         s.spawn(move || {
                             let mut chunk_bytes = vec![0u8; self.chunk_size_bytes];
 
-                            for chunk_idx in (0..self.num_array_chunks())
-                                .skip(thread_idx)
-                                .step_by(self.threads as usize)
-                            {
-                                tracing::info!("[Thread {thread_idx}] expanding chunk {chunk_idx}");
-                                self.expand_chunk(&mut chunk_bytes, chunk_idx, depth);
-                            }
-                        })
-                    })
-                    .collect::<Vec<_>>();
-
-                threads.into_iter().for_each(|t| t.join().unwrap());
-
-                let threads = (0..self.threads as usize)
-                    .map(|thread_idx| {
-                        s.spawn(move || {
                             let mut new_positions = 0;
-
-                            // Read the update files and update the array chunks
-                            let mut chunk_bytes = vec![0u8; self.chunk_size_bytes];
-
                             for chunk_idx in (0..self.num_array_chunks())
                                 .skip(thread_idx)
                                 .step_by(self.threads as usize)
                             {
-                                tracing::info!("[Thread {thread_idx}] updating chunk {chunk_idx}");
-                                new_positions +=
-                                    self.update_chunk(&mut chunk_bytes, chunk_idx, depth);
+                                tracing::info!("[Thread {thread_idx}] expanding chunk {chunk_idx} from depth {depth} to depth {}", depth + 1);
+                                new_positions += self.update_and_expand_chunk(
+                                    &mut chunk_bytes,
+                                    chunk_idx,
+                                    depth,
+                                );
                             }
 
                             new_positions
