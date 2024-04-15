@@ -8,13 +8,9 @@ use std::{
 
 pub struct TwoBitBfsBuilder<
     T: Default + Sync,
-    Encoder: Fn(&T) -> u64 + Sync,
-    Decoder: Fn(&mut T, u64) + Sync,
-    Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
+    Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
     const EXPANSION_NODES: usize,
 > {
-    encoder: Option<Encoder>,
-    decoder: Option<Decoder>,
     expander: Option<Expander>,
     threads: u64,
     chunk_size_bytes: Option<usize>,
@@ -30,11 +26,9 @@ pub struct TwoBitBfsBuilder<
 
 impl<
         T: Default + Sync,
-        Encoder: Fn(&T) -> u64 + Sync,
-        Decoder: Fn(&mut T, u64) + Sync,
-        Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
+        Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
         const EXPANSION_NODES: usize,
-    > Default for TwoBitBfsBuilder<T, Encoder, Decoder, Expander, EXPANSION_NODES>
+    > Default for TwoBitBfsBuilder<T, Expander, EXPANSION_NODES>
 {
     fn default() -> Self {
         Self::new()
@@ -43,16 +37,12 @@ impl<
 
 impl<
         T: Default + Sync,
-        Encoder: Fn(&T) -> u64 + Sync,
-        Decoder: Fn(&mut T, u64) + Sync,
-        Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
+        Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
         const EXPANSION_NODES: usize,
-    > TwoBitBfsBuilder<T, Encoder, Decoder, Expander, EXPANSION_NODES>
+    > TwoBitBfsBuilder<T, Expander, EXPANSION_NODES>
 {
     pub fn new() -> Self {
         Self {
-            encoder: None,
-            decoder: None,
             expander: None,
             threads: 1,
             chunk_size_bytes: None,
@@ -65,16 +55,6 @@ impl<
             initial_memory_limit: None,
             phantom_t: PhantomData,
         }
-    }
-
-    pub fn encoder(mut self, encoder: Encoder) -> Self {
-        self.encoder = Some(encoder);
-        self
-    }
-
-    pub fn decoder(mut self, decoder: Decoder) -> Self {
-        self.decoder = Some(decoder);
-        self
     }
 
     pub fn expander(mut self, expander: Expander) -> Self {
@@ -130,7 +110,7 @@ impl<
         self
     }
 
-    pub fn build(self) -> Option<TwoBitBfs<T, Encoder, Decoder, Expander, EXPANSION_NODES>> {
+    pub fn build(self) -> Option<TwoBitBfs<T, Expander, EXPANSION_NODES>> {
         // Require that all chunks are the same size
         let chunk_size_bytes = self.chunk_size_bytes?;
         let state_size = self.state_size? as usize;
@@ -139,8 +119,6 @@ impl<
         }
 
         Some(TwoBitBfs {
-            encoder: self.encoder?,
-            decoder: self.decoder?,
             expander: self.expander?,
             threads: self.threads,
             chunk_size_bytes: self.chunk_size_bytes?,
@@ -163,13 +141,9 @@ const OLD: u8 = 0b11;
 
 pub struct TwoBitBfs<
     T: Default + Sync,
-    Encoder: Fn(&T) -> u64 + Sync,
-    Decoder: Fn(&mut T, u64) + Sync,
-    Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
+    Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
     const EXPANSION_NODES: usize,
 > {
-    encoder: Encoder,
-    decoder: Decoder,
     expander: Expander,
     threads: u64,
     chunk_size_bytes: usize,
@@ -185,22 +159,12 @@ pub struct TwoBitBfs<
 
 impl<
         T: Default + Sync,
-        Encoder: Fn(&T) -> u64 + Sync,
-        Decoder: Fn(&mut T, u64) + Sync,
-        Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
+        Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
         const EXPANSION_NODES: usize,
-    > TwoBitBfs<T, Encoder, Decoder, Expander, EXPANSION_NODES>
+    > TwoBitBfs<T, Expander, EXPANSION_NODES>
 {
-    fn encode(&self, state: &T) -> u64 {
-        (self.encoder)(state)
-    }
-
-    fn decode(&self, state: &mut T, encoded: u64) {
-        (self.decoder)(state, encoded);
-    }
-
-    fn expand(&self, state: &mut T, nodes: &mut [u64; EXPANSION_NODES]) {
-        (self.expander)(state, nodes);
+    fn expand(&self, state: &mut T, encoded: u64, nodes: &mut [u64; EXPANSION_NODES]) {
+        (self.expander)(state, encoded, nodes);
     }
 
     fn array_bytes(&self) -> usize {
@@ -351,8 +315,7 @@ impl<
 
                 if val == current {
                     let encoded = self.bit_coords_to_node(chunk_idx, chunk_offset, bit_idx);
-                    self.decode(&mut state, encoded);
-                    self.expand(&mut state, &mut expanded);
+                    self.expand(&mut state, encoded, &mut expanded);
                     for node in expanded {
                         let (idx, offset) = self.node_to_chunk_coords(node);
                         update_sets[idx].insert(offset);
@@ -464,8 +427,7 @@ impl<
             new = 0;
 
             for &encoded in &current {
-                self.decode(&mut state, encoded);
-                self.expand(&mut state, &mut expanded);
+                self.expand(&mut state, encoded, &mut expanded);
                 for node in expanded {
                     if !old.contains(&node) && !current.contains(&node) && next.insert(node) {
                         new += 1;
