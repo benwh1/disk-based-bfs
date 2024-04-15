@@ -20,7 +20,7 @@ pub struct TwoBitBfsBuilder<
     chunk_size_bytes: Option<usize>,
     update_set_capacity: Option<usize>,
     capacity_check_frequency: Option<usize>,
-    initial_state: Option<T>,
+    initial_state: Option<u64>,
     state_size: Option<u64>,
     array_file_directory: Option<PathBuf>,
     update_file_directory: Option<PathBuf>,
@@ -105,7 +105,7 @@ impl<
         self
     }
 
-    pub fn initial_state(mut self, initial_state: T) -> Self {
+    pub fn initial_state(mut self, initial_state: u64) -> Self {
         self.initial_state = Some(initial_state);
         self
     }
@@ -175,7 +175,7 @@ pub struct TwoBitBfs<
     chunk_size_bytes: usize,
     update_set_capacity: usize,
     capacity_check_frequency: usize,
-    initial_state: T,
+    initial_state: u64,
     state_size: u64,
     array_file_directory: PathBuf,
     update_file_directory: PathBuf,
