@@ -7,10 +7,10 @@ use std::{
 };
 
 pub struct TwoBitBfsBuilder<
-    T: Clone,
-    Encoder: Fn(&T) -> u64,
-    Decoder: Fn(&mut T, u64),
-    Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]),
+    T: Clone + Sync,
+    Encoder: Fn(&T) -> u64 + Sync,
+    Decoder: Fn(&mut T, u64) + Sync,
+    Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
     const EXPANSION_NODES: usize,
 > {
     encoder: Option<Encoder>,
@@ -27,10 +27,10 @@ pub struct TwoBitBfsBuilder<
 }
 
 impl<
-        T: Clone,
-        Encoder: Fn(&T) -> u64,
-        Decoder: Fn(&mut T, u64),
-        Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]),
+        T: Clone + Sync,
+        Encoder: Fn(&T) -> u64 + Sync,
+        Decoder: Fn(&mut T, u64) + Sync,
+        Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
         const EXPANSION_NODES: usize,
     > TwoBitBfsBuilder<T, Encoder, Decoder, Expander, EXPANSION_NODES>
 {
@@ -133,10 +133,10 @@ const NEXT: u8 = 0b10;
 const OLD: u8 = 0b11;
 
 pub struct TwoBitBfs<
-    T: Clone,
-    Encoder: Fn(&T) -> u64,
-    Decoder: Fn(&mut T, u64),
-    Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]),
+    T: Clone + Sync,
+    Encoder: Fn(&T) -> u64 + Sync,
+    Decoder: Fn(&mut T, u64) + Sync,
+    Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
     const EXPANSION_NODES: usize,
 > {
     encoder: Encoder,
@@ -153,10 +153,10 @@ pub struct TwoBitBfs<
 }
 
 impl<
-        T: Clone,
-        Encoder: Fn(&T) -> u64,
-        Decoder: Fn(&mut T, u64),
-        Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]),
+        T: Clone + Sync,
+        Encoder: Fn(&T) -> u64 + Sync,
+        Decoder: Fn(&mut T, u64) + Sync,
+        Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
         const EXPANSION_NODES: usize,
     > TwoBitBfs<T, Encoder, Decoder, Expander, EXPANSION_NODES>
 {
@@ -494,8 +494,6 @@ impl<
 
         // Continue with BFS using disk
 
-        let mut chunk_bytes = vec![0u8; self.chunk_size_bytes];
-
         // Because of how chunks get updated, the values of `NEXT` and `CURRENT` get swapped every
         // iteration (see Korf's paper, in the paragraph "Eliminating the Conversion Scan").
         let mut next_and_current_swapped = false;
@@ -507,16 +505,48 @@ impl<
                 (CURRENT, NEXT)
             };
 
-            for chunk_idx in 0..self.num_array_chunks() {
-                self.expand_chunk(&mut chunk_bytes, chunk_idx, depth, current);
-            }
+            let new_positions = std::thread::scope(|s| {
+                // Expand chunks
+                let threads = (0..self.threads as usize)
+                    .map(|thread_idx| {
+                        s.spawn(move || {
+                            let mut chunk_bytes = vec![0u8; self.chunk_size_bytes];
 
-            let mut new_positions = 0;
+                            for chunk_idx in (0..self.num_array_chunks())
+                                .skip(thread_idx)
+                                .step_by(self.threads as usize)
+                            {
+                                self.expand_chunk(&mut chunk_bytes, chunk_idx, depth, current);
+                            }
+                        })
+                    })
+                    .collect::<Vec<_>>();
 
-            // Read the update files and update the array chunks
-            for chunk_idx in 0..self.num_array_chunks() {
-                new_positions += self.update_chunk(&mut chunk_bytes, chunk_idx, depth, next);
-            }
+                threads.into_iter().for_each(|t| t.join().unwrap());
+
+                let threads = (0..self.threads as usize)
+                    .map(|thread_idx| {
+                        s.spawn(move || {
+                            let mut new_positions = 0;
+
+                            // Read the update files and update the array chunks
+                            let mut chunk_bytes = vec![0u8; self.chunk_size_bytes];
+
+                            for chunk_idx in (0..self.num_array_chunks())
+                                .skip(thread_idx)
+                                .step_by(self.threads as usize)
+                            {
+                                new_positions +=
+                                    self.update_chunk(&mut chunk_bytes, chunk_idx, depth, next);
+                            }
+
+                            new_positions
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                threads.into_iter().map(|t| t.join().unwrap()).sum::<u64>()
+            });
 
             println!("depth {} new {new_positions}", depth + 1);
 
