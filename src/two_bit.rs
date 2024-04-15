@@ -7,7 +7,7 @@ use std::{
 };
 
 pub struct TwoBitBfsBuilder<
-    T: Clone + Sync,
+    T: Default + Sync,
     Encoder: Fn(&T) -> u64 + Sync,
     Decoder: Fn(&mut T, u64) + Sync,
     Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
@@ -29,7 +29,7 @@ pub struct TwoBitBfsBuilder<
 }
 
 impl<
-        T: Clone + Sync,
+        T: Default + Sync,
         Encoder: Fn(&T) -> u64 + Sync,
         Decoder: Fn(&mut T, u64) + Sync,
         Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
@@ -42,7 +42,7 @@ impl<
 }
 
 impl<
-        T: Clone + Sync,
+        T: Default + Sync,
         Encoder: Fn(&T) -> u64 + Sync,
         Decoder: Fn(&mut T, u64) + Sync,
         Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
@@ -162,7 +162,7 @@ const NEXT: u8 = 0b10;
 const OLD: u8 = 0b11;
 
 pub struct TwoBitBfs<
-    T: Clone + Sync,
+    T: Default + Sync,
     Encoder: Fn(&T) -> u64 + Sync,
     Decoder: Fn(&mut T, u64) + Sync,
     Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
@@ -184,7 +184,7 @@ pub struct TwoBitBfs<
 }
 
 impl<
-        T: Clone + Sync,
+        T: Default + Sync,
         Encoder: Fn(&T) -> u64 + Sync,
         Decoder: Fn(&mut T, u64) + Sync,
         Expander: Fn(&mut T, &mut [u64; EXPANSION_NODES]) + Sync,
@@ -323,7 +323,7 @@ impl<
     }
 
     fn expand_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) {
-        let mut state = self.initial_state.clone();
+        let mut state = T::default();
         let mut expanded = [0u64; EXPANSION_NODES];
 
         // Create update sets
@@ -447,7 +447,7 @@ impl<
         let mut current = HashSet::<u64>::new();
         let mut next = HashSet::<u64>::new();
 
-        let mut state = self.initial_state.clone();
+        let mut state = T::default();
         let mut expanded = [0u64; EXPANSION_NODES];
         let mut depth = 0;
 
