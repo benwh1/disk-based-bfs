@@ -216,13 +216,7 @@ impl<
     }
 
     /// Updates a chunk from depth `depth` to depth `depth + 1`
-    fn update_chunk(
-        &self,
-        chunk_bytes: &mut [u8],
-        chunk_idx: usize,
-        depth: usize,
-        next: u8,
-    ) -> u64 {
+    fn update_chunk(&self, chunk_bytes: &mut [u8], chunk_idx: usize, depth: usize) -> u64 {
         // Read the chunk from disk
         let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
         let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
@@ -235,8 +229,13 @@ impl<
 
         file.read_exact(chunk_bytes).unwrap();
 
+        let (current, next) = if depth % 2 == 0 {
+            (CURRENT, NEXT)
+        } else {
+            (NEXT, CURRENT)
+        };
+
         // Set current positions to old
-        let current = if next == NEXT { CURRENT } else { NEXT };
         for byte in chunk_bytes.iter_mut() {
             for bit_idx in (0..8).step_by(2) {
                 if (*byte >> bit_idx) & 0b11 == current {
@@ -350,7 +349,7 @@ impl<
         }
     }
 
-    fn expand_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize, current: u8) {
+    fn expand_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) {
         let mut state = self.initial_state.clone();
         let mut expanded = [0u64; EXPANSION_NODES];
 
@@ -387,6 +386,7 @@ impl<
 
             for bit_idx in (0..8).step_by(2) {
                 let val = (byte >> bit_idx) & 0b11;
+                let current = if depth % 2 == 0 { CURRENT } else { NEXT };
 
                 if val == current {
                     let encoded = self.bit_coords_to_node(chunk_idx, chunk_offset, bit_idx);
@@ -515,7 +515,8 @@ impl<
             {
                 let byte = chunk_bytes[byte_idx];
                 let mask = 0b11 << bit_idx;
-                let new_byte = (byte & !mask) | CURRENT << bit_idx;
+                let current = if depth % 2 == 0 { CURRENT } else { NEXT };
+                let new_byte = (byte & !mask) | current << bit_idx;
                 chunk_bytes[byte_idx] = new_byte;
             }
 
@@ -532,17 +533,7 @@ impl<
 
         // Continue with BFS using disk
 
-        // Because of how chunks get updated, the values of `NEXT` and `CURRENT` get swapped every
-        // iteration (see Korf's paper, in the paragraph "Eliminating the Conversion Scan").
-        let mut next_and_current_swapped = false;
-
         loop {
-            let (current, next) = if next_and_current_swapped {
-                (NEXT, CURRENT)
-            } else {
-                (CURRENT, NEXT)
-            };
-
             let new_positions = std::thread::scope(|s| {
                 // Expand chunks
                 let threads = (0..self.threads as usize)
@@ -555,7 +546,7 @@ impl<
                                 .step_by(self.threads as usize)
                             {
                                 tracing::info!("[Thread {thread_idx}] expanding chunk {chunk_idx}");
-                                self.expand_chunk(&mut chunk_bytes, chunk_idx, depth, current);
+                                self.expand_chunk(&mut chunk_bytes, chunk_idx, depth);
                             }
                         })
                     })
@@ -577,7 +568,7 @@ impl<
                             {
                                 tracing::info!("[Thread {thread_idx}] updating chunk {chunk_idx}");
                                 new_positions +=
-                                    self.update_chunk(&mut chunk_bytes, chunk_idx, depth, next);
+                                    self.update_chunk(&mut chunk_bytes, chunk_idx, depth);
                             }
 
                             new_positions
@@ -595,7 +586,6 @@ impl<
             }
 
             depth += 1;
-            next_and_current_swapped = !next_and_current_swapped;
         }
     }
 }
