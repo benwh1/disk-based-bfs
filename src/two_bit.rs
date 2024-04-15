@@ -20,7 +20,7 @@ pub struct TwoBitBfsBuilder<
     chunk_size_bytes: Option<usize>,
     update_set_capacity: Option<usize>,
     capacity_check_frequency: Option<usize>,
-    initial_state: Option<u64>,
+    initial_states: Option<Vec<u64>>,
     state_size: Option<u64>,
     array_file_directory: Option<PathBuf>,
     update_file_directory: Option<PathBuf>,
@@ -58,7 +58,7 @@ impl<
             chunk_size_bytes: None,
             update_set_capacity: None,
             capacity_check_frequency: None,
-            initial_state: None,
+            initial_states: None,
             state_size: None,
             array_file_directory: None,
             update_file_directory: None,
@@ -105,8 +105,8 @@ impl<
         self
     }
 
-    pub fn initial_state(mut self, initial_state: u64) -> Self {
-        self.initial_state = Some(initial_state);
+    pub fn initial_states(mut self, initial_states: &[u64]) -> Self {
+        self.initial_states = Some(initial_states.to_vec());
         self
     }
 
@@ -146,7 +146,7 @@ impl<
             chunk_size_bytes: self.chunk_size_bytes?,
             update_set_capacity: self.update_set_capacity?,
             capacity_check_frequency: self.capacity_check_frequency?,
-            initial_state: self.initial_state?,
+            initial_states: self.initial_states?,
             state_size: self.state_size?,
             array_file_directory: self.array_file_directory?,
             update_file_directory: self.update_file_directory?,
@@ -175,7 +175,7 @@ pub struct TwoBitBfs<
     chunk_size_bytes: usize,
     update_set_capacity: usize,
     capacity_check_frequency: usize,
-    initial_state: u64,
+    initial_states: Vec<u64>,
     state_size: u64,
     array_file_directory: PathBuf,
     update_file_directory: PathBuf,
@@ -451,7 +451,9 @@ impl<
         let mut expanded = [0u64; EXPANSION_NODES];
         let mut depth = 0;
 
-        current.insert(self.initial_state);
+        for &state in &self.initial_states {
+            current.insert(state);
+        }
 
         let mut new;
         let mut total = 1;
