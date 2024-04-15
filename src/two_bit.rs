@@ -18,6 +18,8 @@ pub struct TwoBitBfsBuilder<
     expander: Option<Expander>,
     threads: u64,
     chunk_size_bytes: Option<usize>,
+    update_set_capacity: Option<usize>,
+    capacity_check_frequency: Option<usize>,
     initial_state: Option<T>,
     state_size: Option<u64>,
     array_file_directory: Option<PathBuf>,
@@ -54,6 +56,8 @@ impl<
             expander: None,
             threads: 1,
             chunk_size_bytes: None,
+            update_set_capacity: None,
+            capacity_check_frequency: None,
             initial_state: None,
             state_size: None,
             array_file_directory: None,
@@ -88,6 +92,16 @@ impl<
         if chunk_size_bytes < 1 << 30 {
             self.chunk_size_bytes = Some(chunk_size_bytes);
         }
+        self
+    }
+
+    pub fn update_set_capacity(mut self, update_set_capacity: usize) -> Self {
+        self.update_set_capacity = Some(update_set_capacity);
+        self
+    }
+
+    pub fn capacity_check_frequency(mut self, capacity_check_frequency: usize) -> Self {
+        self.capacity_check_frequency = Some(capacity_check_frequency);
         self
     }
 
@@ -130,6 +144,8 @@ impl<
             expander: self.expander?,
             threads: self.threads,
             chunk_size_bytes: self.chunk_size_bytes?,
+            update_set_capacity: self.update_set_capacity?,
+            capacity_check_frequency: self.capacity_check_frequency?,
             initial_state: self.initial_state?,
             state_size: self.state_size?,
             array_file_directory: self.array_file_directory?,
@@ -157,6 +173,8 @@ pub struct TwoBitBfs<
     expander: Expander,
     threads: u64,
     chunk_size_bytes: usize,
+    update_set_capacity: usize,
+    capacity_check_frequency: usize,
     initial_state: T,
     state_size: u64,
     array_file_directory: PathBuf,
@@ -349,13 +367,14 @@ impl<
         file.read_exact(chunk_buffer).unwrap();
 
         // Create update sets
-        let mut update_sets = vec![HashSet::<u32>::with_capacity(16384); self.num_array_chunks()];
+        let mut update_sets =
+            vec![HashSet::<u32>::with_capacity(self.update_set_capacity); self.num_array_chunks()];
 
         // Expand current nodes
         for (chunk_offset, byte) in chunk_buffer.iter().enumerate() {
-            if chunk_offset % 256 == 0 {
+            if chunk_offset % self.capacity_check_frequency == 0 {
                 // Check if any of the update sets may go over capacity
-                let max_new_nodes = 256 * EXPANSION_NODES;
+                let max_new_nodes = self.capacity_check_frequency * EXPANSION_NODES;
 
                 for (idx, set) in update_sets.iter_mut().enumerate() {
                     if set.len() + max_new_nodes > set.capacity() {
