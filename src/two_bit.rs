@@ -179,6 +179,22 @@ impl<
         self.chunk_size_bytes * 4
     }
 
+    fn update_file_dir_path(
+        &self,
+        depth: usize,
+        updated_chunk_idx: usize,
+        from_chunk_idx: usize,
+    ) -> PathBuf {
+        self.update_file_directory
+            .join(format!("depth-{depth}"))
+            .join(format!("update-chunk-{updated_chunk_idx}"))
+            .join(format!("from-chunk-{from_chunk_idx}"))
+    }
+
+    fn chunk_dir_path(&self, depth: usize) -> PathBuf {
+        self.array_file_directory.join(format!("depth-{depth}"))
+    }
+
     fn write_update_file(
         &self,
         depth: usize,
@@ -186,11 +202,7 @@ impl<
         from_chunk_idx: usize,
         update_set: &mut HashSet<u32>,
     ) {
-        let dir_path = self
-            .update_file_directory
-            .join(format!("depth-{}", depth + 1))
-            .join(format!("update-chunk-{updated_chunk_idx}"))
-            .join(format!("from-chunk-{from_chunk_idx}"));
+        let dir_path = self.update_file_dir_path(depth + 1, updated_chunk_idx, from_chunk_idx);
 
         std::fs::create_dir_all(&dir_path).unwrap();
 
@@ -348,9 +360,7 @@ impl<
         self.expand_chunk(chunk_buffer, chunk_idx, depth + 1);
 
         // Write new chunk
-        let new_chunk_dir = self
-            .array_file_directory
-            .join(format!("depth-{}", depth + 1));
+        let new_chunk_dir = self.chunk_dir_path(depth + 1);
 
         std::fs::create_dir_all(&new_chunk_dir).unwrap();
 
@@ -502,7 +512,7 @@ impl<
             }
 
             // Write the updated chunk to disk
-            let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
+            let dir_path = self.chunk_dir_path(depth);
             std::fs::create_dir_all(&dir_path).unwrap();
 
             let file_path_tmp = dir_path.join(format!("chunk-{chunk_idx}.dat.tmp"));
