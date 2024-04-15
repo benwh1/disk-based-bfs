@@ -261,7 +261,7 @@ impl<
             }
         }
 
-        println!("depth {} chunk {chunk_idx} new {new_positions}", depth + 1);
+        tracing::info!("depth {} chunk {chunk_idx} new {new_positions}", depth + 1);
 
         // Write new chunk
         let new_chunk_dir = self
@@ -416,6 +416,7 @@ impl<
         let mut new;
         let mut total = 1;
 
+        tracing::info!("starting in-memory BFS");
 
         loop {
             new = 0;
@@ -434,14 +435,16 @@ impl<
             depth += 1;
             total += new;
 
-            println!("depth {depth} new {new} total {total}");
+            tracing::info!("depth {depth} new {new} total {total}");
 
             // No new nodes, we are done already.
             if new == 0 {
+                tracing::info!("no new nodes, done");
                 return;
             }
 
             if total > max_capacity {
+                tracing::info!("exceeded memory limit");
                 break;
             }
 
@@ -453,7 +456,11 @@ impl<
 
         // We ran out of memory. Continue BFS using disk.
 
+        tracing::info!("starting disk BFS");
+
         for chunk_idx in 0..self.num_array_chunks() {
+            tracing::info!("creating chunk {chunk_idx}");
+
             const UNSEEN_BYTE: u8 = UNSEEN * 0b01010101;
             let mut chunk_bytes = vec![UNSEEN_BYTE; self.chunk_size_bytes];
 
@@ -516,6 +523,7 @@ impl<
                                 .skip(thread_idx)
                                 .step_by(self.threads as usize)
                             {
+                                tracing::info!("[Thread {thread_idx}] expanding chunk {chunk_idx}");
                                 self.expand_chunk(&mut chunk_bytes, chunk_idx, depth, current);
                             }
                         })
@@ -536,6 +544,7 @@ impl<
                                 .skip(thread_idx)
                                 .step_by(self.threads as usize)
                             {
+                                tracing::info!("[Thread {thread_idx}] updating chunk {chunk_idx}");
                                 new_positions +=
                                     self.update_chunk(&mut chunk_bytes, chunk_idx, depth, next);
                             }
@@ -548,7 +557,7 @@ impl<
                 threads.into_iter().map(|t| t.join().unwrap()).sum::<u64>()
             });
 
-            println!("depth {} new {new_positions}", depth + 1);
+            tracing::info!("depth {} new {new_positions}", depth + 1);
 
             if new_positions == 0 {
                 break;
