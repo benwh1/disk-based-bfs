@@ -392,7 +392,6 @@ impl<
     fn in_memory_bfs(&self) -> InMemoryBfsResult {
         let max_capacity = self.initial_memory_limit / 8;
 
-        // Do the initial iterations of BFS in memory
         let mut old = HashSet::<u64>::with_capacity(max_capacity / 2);
         let mut current = HashSet::<u64>::new();
         let mut next = HashSet::<u64>::new();
@@ -424,7 +423,7 @@ impl<
             depth += 1;
             total += new;
 
-            tracing::info!("depth {depth} new {new} total {total}");
+            tracing::info!("depth {depth} new {new}");
 
             // No new nodes, we are done already.
             if new == 0 {
