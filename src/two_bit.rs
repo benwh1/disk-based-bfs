@@ -259,12 +259,8 @@ impl<
         file.read_exact(chunk_buffer).unwrap();
     }
 
-    fn update_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) -> u64 {
-        let (current, next) = if depth % 2 == 0 {
-            (CURRENT, NEXT)
-        } else {
-            (NEXT, CURRENT)
-        };
+    fn demote_chunk(&self, chunk_buffer: &mut [u8], depth: usize) {
+        let current = if depth % 2 == 0 { CURRENT } else { NEXT };
 
         // Set current positions to old
         for byte in chunk_buffer.iter_mut() {
@@ -275,6 +271,10 @@ impl<
                 }
             }
         }
+    }
+
+    fn update_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) -> u64 {
+        let next = if depth % 2 == 0 { NEXT } else { CURRENT };
 
         let mut new_positions = 0u64;
 
@@ -390,6 +390,7 @@ impl<
         depth: usize,
     ) -> u64 {
         self.read_chunk(chunk_buffer, chunk_idx, depth);
+        self.demote_chunk(chunk_buffer, depth);
         let new_positions = self.update_chunk(chunk_buffer, chunk_idx, depth);
         tracing::info!("depth {depth} chunk {chunk_idx} new {new_positions}");
         self.expand_chunk(chunk_buffer, chunk_idx, depth + 1);
