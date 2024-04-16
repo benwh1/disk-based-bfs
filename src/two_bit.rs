@@ -139,6 +139,15 @@ const CURRENT: u8 = 0b01;
 const NEXT: u8 = 0b10;
 const OLD: u8 = 0b11;
 
+pub enum InMemoryBfsResult {
+    Complete,
+    OutOfMemory {
+        old: HashSet<u64>,
+        next: HashSet<u64>,
+        depth: usize,
+    },
+}
+
 pub struct TwoBitBfs<
     T: Default + Sync,
     Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
@@ -396,33 +405,7 @@ impl<
         new_positions
     }
 
-    /// Converts an encoded node value to (chunk_idx, byte_idx, bit_idx)
-    fn node_to_bit_coords(&self, node: u64) -> (usize, usize, usize) {
-        let node = node as usize;
-        let chunk_idx = (node / 4) / self.chunk_size_bytes;
-        let byte_idx = (node / 4) % self.chunk_size_bytes;
-        let bit_idx = 2 * (node % 4);
-        (chunk_idx, byte_idx, bit_idx)
-    }
-
-    fn bit_coords_to_node(&self, chunk_idx: usize, byte_idx: usize, bit_idx: usize) -> u64 {
-        (chunk_idx * self.chunk_size_bytes * 4 + byte_idx * 4 + bit_idx / 2) as u64
-    }
-
-    /// Converts an encoded node value to (chunk_idx, chunk_offset)
-    fn node_to_chunk_coords(&self, node: u64) -> (usize, u32) {
-        let node = node as usize;
-        let n = self.states_per_chunk();
-        (node / n, (node % n) as u32)
-    }
-
-    fn chunk_offset_to_bit_coords(&self, chunk_offset: u32) -> (usize, usize) {
-        let byte_idx = (chunk_offset / 4) as usize;
-        let bit_idx = 2 * (chunk_offset % 4) as usize;
-        (byte_idx, bit_idx)
-    }
-
-    pub fn run(&self) {
+    fn in_memory_bfs(&self) -> InMemoryBfsResult {
         let max_capacity = self.initial_memory_limit / 8;
 
         // Do the initial iterations of BFS in memory
@@ -462,7 +445,7 @@ impl<
             // No new nodes, we are done already.
             if new == 0 {
                 tracing::info!("no new nodes, done");
-                return;
+                return InMemoryBfsResult::Complete;
             }
 
             if total > max_capacity {
@@ -476,7 +459,40 @@ impl<
             std::mem::swap(&mut current, &mut next);
         }
 
-        // We ran out of memory. Continue BFS using disk.
+        InMemoryBfsResult::OutOfMemory { old, next, depth }
+    }
+
+    /// Converts an encoded node value to (chunk_idx, byte_idx, bit_idx)
+    fn node_to_bit_coords(&self, node: u64) -> (usize, usize, usize) {
+        let node = node as usize;
+        let chunk_idx = (node / 4) / self.chunk_size_bytes;
+        let byte_idx = (node / 4) % self.chunk_size_bytes;
+        let bit_idx = 2 * (node % 4);
+        (chunk_idx, byte_idx, bit_idx)
+    }
+
+    fn bit_coords_to_node(&self, chunk_idx: usize, byte_idx: usize, bit_idx: usize) -> u64 {
+        (chunk_idx * self.chunk_size_bytes * 4 + byte_idx * 4 + bit_idx / 2) as u64
+    }
+
+    /// Converts an encoded node value to (chunk_idx, chunk_offset)
+    fn node_to_chunk_coords(&self, node: u64) -> (usize, u32) {
+        let node = node as usize;
+        let n = self.states_per_chunk();
+        (node / n, (node % n) as u32)
+    }
+
+    fn chunk_offset_to_bit_coords(&self, chunk_offset: u32) -> (usize, usize) {
+        let byte_idx = (chunk_offset / 4) as usize;
+        let bit_idx = 2 * (chunk_offset % 4) as usize;
+        (byte_idx, bit_idx)
+    }
+
+    pub fn run(&self) {
+        let (old, next, mut depth) = match self.in_memory_bfs() {
+            InMemoryBfsResult::Complete => return,
+            InMemoryBfsResult::OutOfMemory { old, next, depth } => (old, next, depth),
+        };
 
         tracing::info!("starting disk BFS");
 
