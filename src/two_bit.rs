@@ -547,19 +547,27 @@ impl<
         drop(old);
         drop(next);
 
-        loop {
-            let new_positions = std::thread::scope(|s| {
-                // Expand chunks
-                let threads = (0..self.threads as usize)
-                    .map(|t| {
-                        s.spawn(move || {
-                            let mut chunk_buffer = vec![0u8; self.chunk_size_bytes];
-                            let mut new_positions = 0;
+        let mut chunk_buffers = vec![vec![0u8; self.chunk_size_bytes]; self.threads as usize];
 
-                            for chunk_idx in (0..self.num_array_chunks())
-                                .skip(t)
-                                .step_by(self.threads as usize)
-                            {
+        loop {
+            let mut new_positions = 0;
+
+            for group_idx in (0..self.num_array_chunks()).step_by(self.threads as usize) {
+                std::thread::scope(|s| {
+                    let threads = (0..self.threads)
+                        .map(|t| {
+                            let mut chunk_buffer = std::mem::take(&mut chunk_buffers[t as usize]);
+
+                            s.spawn(move || {
+                                let chunk_idx = group_idx + t as usize;
+
+                                // If the number of chunks isn't divisible by the number of
+                                // threads, then `chunk_idx` may be out of bounds during the last
+                                // group of threads.
+                                if chunk_idx >= self.num_array_chunks() {
+                                    return None;
+                                }
+
                                 tracing::info!("[Thread {t}] reading depth {depth} chunk {chunk_idx}");
                                 self.read_chunk(&mut chunk_buffer, chunk_idx, depth);
 
@@ -568,7 +576,6 @@ impl<
 
                                 tracing::info!("[Thread {t}] updating depth {depth} -> {} chunk {chunk_idx}", depth + 1);
                                 let new = self.update_chunk(&mut chunk_buffer, chunk_idx, depth);
-                                new_positions += new;
 
                                 tracing::info!("[Thread {t}] depth {depth} chunk {chunk_idx} new {new}");
 
@@ -582,16 +589,24 @@ impl<
                                 self.delete_chunk_file(depth, chunk_idx);
 
                                 tracing::info!("[Thread {t}] deleting update files for depth {depth} -> {} chunk {chunk_idx}", depth + 1);
-                                self.delete_update_files( depth + 1, chunk_idx);
-                            }
+                                self.delete_update_files(depth + 1, chunk_idx);
 
-                            new_positions
+                                Some((chunk_buffer, new))
+                            })
                         })
-                    })
-                    .collect::<Vec<_>>();
+                        .collect::<Vec<_>>();
 
-                threads.into_iter().map(|t| t.join().unwrap()).sum::<u64>()
-            });
+                    for (t, thread) in threads.into_iter().enumerate() {
+                        if let Some((mut chunk_buffer, new)) = thread.join().unwrap() {
+                            new_positions += new;
+
+                            // Swap the buffer back into place so the next group of threads can
+                            // reuse it
+                            std::mem::swap(&mut chunk_buffers[t], &mut chunk_buffer);
+                        }
+                    }
+                });
+            }
 
             tracing::info!("depth {} new {new_positions}", depth + 1);
 
