@@ -216,9 +216,7 @@ impl<
     }
 
     fn read_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) {
-        // Read the chunk from disk
-        let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
-        let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
+        let file_path = self.chunk_file_path(depth, chunk_idx);
         let mut file = File::open(file_path).unwrap();
 
         // Check that the file size is correct
@@ -242,8 +240,7 @@ impl<
         std::fs::create_dir_all(&dir_path).unwrap();
 
         let part = std::fs::read_dir(&dir_path).unwrap().flatten().count();
-
-        let file_path_tmp = dir_path.join(format!("part-{}.dat.tmp", part));
+        let file_path_tmp = dir_path.join(format!("part-{part}.dat.tmp"));
         let file = File::create_new(&file_path_tmp).unwrap();
         let mut writer = BufWriter::new(file);
 
@@ -255,23 +252,23 @@ impl<
 
         drop(writer);
 
-        let file_path = dir_path.join(format!("part-{}.dat", part));
+        let file_path = dir_path.join(format!("part-{part}.dat"));
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
     fn write_chunk(&self, chunk_buffer: &[u8], chunk_idx: usize, depth: usize) {
-        let new_chunk_dir = self.chunk_dir_path(depth);
+        let dir_path = self.chunk_dir_path(depth);
 
-        std::fs::create_dir_all(&new_chunk_dir).unwrap();
+        std::fs::create_dir_all(&dir_path).unwrap();
 
-        let new_chunk_path_tmp = new_chunk_dir.join(format!("chunk-{chunk_idx}.dat.tmp"));
-        let mut new_chunk_file = File::create_new(&new_chunk_path_tmp).unwrap();
+        let file_path_tmp = dir_path.join(format!("chunk-{chunk_idx}.dat.tmp"));
+        let mut file = File::create_new(&file_path_tmp).unwrap();
 
-        new_chunk_file.write_all(chunk_buffer).unwrap();
-        drop(new_chunk_file);
+        file.write_all(chunk_buffer).unwrap();
+        drop(file);
 
-        let new_chunk_path = new_chunk_dir.join(format!("chunk-{chunk_idx}.dat"));
-        std::fs::rename(new_chunk_path_tmp, new_chunk_path).unwrap();
+        let file_path = self.chunk_file_path(depth, chunk_idx);
+        std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
     fn delete_chunk_file(&self, depth: usize, chunk_idx: usize) {
@@ -308,11 +305,7 @@ impl<
         let mut new_positions = 0u64;
 
         for i in 0..self.num_array_chunks() {
-            let dir_path = self
-                .update_file_directory
-                .join(format!("depth-{}", depth + 1))
-                .join(format!("update-chunk-{chunk_idx}"))
-                .join(format!("from-chunk-{i}"));
+            let dir_path = self.update_chunk_from_chunk_dir_path(depth + 1, chunk_idx, i);
 
             for file_path in std::fs::read_dir(&dir_path)
                 .unwrap()
@@ -562,7 +555,7 @@ impl<
                             file.write_all(&chunk_bytes).unwrap();
                             drop(file);
 
-                            let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
+                            let file_path = self.chunk_file_path(depth, chunk_idx);
                             std::fs::rename(file_path_tmp, file_path).unwrap();
                         }
                     })
