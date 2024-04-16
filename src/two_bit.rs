@@ -215,6 +215,20 @@ impl<
             .join(format!("chunk-{chunk_idx}.dat"))
     }
 
+    fn read_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) {
+        // Read the chunk from disk
+        let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
+        let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
+        let mut file = File::open(file_path).unwrap();
+
+        // Check that the file size is correct
+        let expected_size = self.chunk_size_bytes;
+        let actual_size = file.metadata().unwrap().len();
+        assert_eq!(expected_size, actual_size as usize);
+
+        file.read_exact(chunk_buffer).unwrap();
+    }
+
     fn write_update_file(
         &self,
         depth: usize,
@@ -260,18 +274,18 @@ impl<
         std::fs::rename(new_chunk_path_tmp, new_chunk_path).unwrap();
     }
 
-    fn read_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) {
-        // Read the chunk from disk
-        let dir_path = self.array_file_directory.join(format!("depth-{depth}"));
-        let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
-        let mut file = File::open(file_path).unwrap();
+    fn delete_chunk_file(&self, depth: usize, chunk_idx: usize) {
+        let file_path = self.chunk_file_path(depth, chunk_idx);
+        if file_path.exists() {
+            std::fs::remove_file(file_path).unwrap();
+        }
+    }
 
-        // Check that the file size is correct
-        let expected_size = self.chunk_size_bytes;
-        let actual_size = file.metadata().unwrap().len();
-        assert_eq!(expected_size, actual_size as usize);
-
-        file.read_exact(chunk_buffer).unwrap();
+    fn delete_update_files(&self, depth: usize, chunk_idx: usize) {
+        let dir_path = self.update_chunk_dir_path(depth, chunk_idx);
+        if dir_path.exists() {
+            std::fs::remove_dir_all(dir_path).unwrap();
+        }
     }
 
     fn demote_chunk(&self, chunk_buffer: &mut [u8], depth: usize) {
@@ -381,20 +395,6 @@ impl<
         // Write remaining update files
         for (idx, set) in update_sets.iter_mut().enumerate() {
             self.write_update_file(depth, idx, chunk_idx, set);
-        }
-    }
-
-    fn delete_chunk_file(&self, depth: usize, chunk_idx: usize) {
-        let file_path = self.chunk_file_path(depth, chunk_idx);
-        if file_path.exists() {
-            std::fs::remove_file(file_path).unwrap();
-        }
-    }
-
-    fn delete_update_files(&self, depth: usize, chunk_idx: usize) {
-        let dir_path = self.update_chunk_dir_path(depth, chunk_idx);
-        if dir_path.exists() {
-            std::fs::remove_dir_all(dir_path).unwrap();
         }
     }
 
