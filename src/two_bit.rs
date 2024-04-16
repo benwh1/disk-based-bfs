@@ -188,6 +188,12 @@ impl<
         self.chunk_size_bytes * 4
     }
 
+    fn update_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+        self.update_file_directory
+            .join(format!("depth-{depth}"))
+            .join(format!("update-chunk-{chunk_idx}"))
+    }
+
     fn update_chunk_from_chunk_dir_path(
         &self,
         depth: usize,
@@ -202,6 +208,11 @@ impl<
 
     fn chunk_dir_path(&self, depth: usize) -> PathBuf {
         self.array_file_directory.join(format!("depth-{depth}"))
+    }
+
+    fn chunk_file_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+        self.chunk_dir_path(depth)
+            .join(format!("chunk-{chunk_idx}.dat"))
     }
 
     fn write_update_file(
@@ -358,6 +369,20 @@ impl<
         }
     }
 
+    fn delete_chunk_file(&self, depth: usize, chunk_idx: usize) {
+        let file_path = self.chunk_file_path(depth, chunk_idx);
+        if file_path.exists() {
+            std::fs::remove_file(file_path).unwrap();
+        }
+    }
+
+    fn delete_update_files(&self, depth: usize, chunk_idx: usize) {
+        let dir_path = self.update_chunk_dir_path(depth, chunk_idx);
+        if dir_path.exists() {
+            std::fs::remove_dir_all(dir_path).unwrap();
+        }
+    }
+
     fn update_and_expand_chunk(
         &self,
         chunk_buffer: &mut [u8],
@@ -383,25 +408,8 @@ impl<
         let new_chunk_path = new_chunk_dir.join(format!("chunk-{chunk_idx}.dat"));
         std::fs::rename(new_chunk_path_tmp, new_chunk_path).unwrap();
 
-        // Delete the old chunk file
-        let old_chunk_path = self
-            .array_file_directory
-            .join(format!("depth-{depth}"))
-            .join(format!("chunk-{chunk_idx}.dat"));
-
-        if old_chunk_path.exists() {
-            std::fs::remove_file(old_chunk_path).unwrap();
-        }
-
-        // Delete the old update files
-        let update_dir_path = self
-            .update_file_directory
-            .join(format!("depth-{}", depth + 1))
-            .join(format!("update-chunk-{chunk_idx}"));
-
-        if update_dir_path.exists() {
-            std::fs::remove_dir_all(update_dir_path).unwrap();
-        }
+        self.delete_chunk_file(depth, chunk_idx);
+        self.delete_update_files(depth + 1, chunk_idx);
 
         new_positions
     }
