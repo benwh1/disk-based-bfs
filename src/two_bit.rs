@@ -389,24 +389,6 @@ impl<
         }
     }
 
-    fn update_and_expand_chunk(
-        &self,
-        chunk_buffer: &mut [u8],
-        chunk_idx: usize,
-        depth: usize,
-    ) -> u64 {
-        self.read_chunk(chunk_buffer, chunk_idx, depth);
-        self.demote_chunk(chunk_buffer, depth);
-        let new_positions = self.update_chunk(chunk_buffer, chunk_idx, depth);
-        tracing::info!("depth {depth} chunk {chunk_idx} new {new_positions}");
-        self.expand_chunk(chunk_buffer, chunk_idx, depth + 1);
-        self.write_chunk(chunk_buffer, chunk_idx, depth + 1);
-        self.delete_chunk_file(depth, chunk_idx);
-        self.delete_update_files(depth + 1, chunk_idx);
-
-        new_positions
-    }
-
     fn in_memory_bfs(&self) -> InMemoryBfsResult {
         let max_capacity = self.initial_memory_limit / 8;
 
@@ -570,21 +552,38 @@ impl<
             let new_positions = std::thread::scope(|s| {
                 // Expand chunks
                 let threads = (0..self.threads as usize)
-                    .map(|thread_idx| {
+                    .map(|t| {
                         s.spawn(move || {
-                            let mut chunk_bytes = vec![0u8; self.chunk_size_bytes];
-
+                            let mut chunk_buffer = vec![0u8; self.chunk_size_bytes];
                             let mut new_positions = 0;
+
                             for chunk_idx in (0..self.num_array_chunks())
-                                .skip(thread_idx)
+                                .skip(t)
                                 .step_by(self.threads as usize)
                             {
-                                tracing::info!("[Thread {thread_idx}] expanding chunk {chunk_idx} from depth {depth} to depth {}", depth + 1);
-                                new_positions += self.update_and_expand_chunk(
-                                    &mut chunk_bytes,
-                                    chunk_idx,
-                                    depth,
-                                );
+                                tracing::info!("[Thread {t}] reading depth {depth} chunk {chunk_idx}");
+                                self.read_chunk(&mut chunk_buffer, chunk_idx, depth);
+
+                                tracing::info!("[Thread {t}] demoting depth {depth} chunk {chunk_idx}");
+                                self.demote_chunk(&mut chunk_buffer, depth);
+
+                                tracing::info!("[Thread {t}] updating depth {depth} -> {} chunk {chunk_idx}", depth + 1);
+                                let new = self.update_chunk(&mut chunk_buffer, chunk_idx, depth);
+                                new_positions += new;
+
+                                tracing::info!("[Thread {t}] depth {depth} chunk {chunk_idx} new {new}");
+
+                                tracing::info!("[Thread {t}] expanding depth {} -> {} chunk {chunk_idx}", depth + 1, depth + 2);
+                                self.expand_chunk(&mut chunk_buffer, chunk_idx, depth + 1);
+
+                                tracing::info!("[Thread {t}] writing depth {} chunk {chunk_idx}", depth + 1);
+                                self.write_chunk(&mut chunk_buffer, chunk_idx, depth + 1);
+
+                                tracing::info!("[Thread {t}] deleting depth {depth} chunk {chunk_idx}");
+                                self.delete_chunk_file(depth, chunk_idx);
+
+                                tracing::info!("[Thread {t}] deleting update files for depth {depth} -> {} chunk {chunk_idx}", depth + 1);
+                                self.delete_update_files( depth + 1, chunk_idx);
                             }
 
                             new_positions
