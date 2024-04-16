@@ -527,6 +527,9 @@ impl<
                 chunk_bytes[byte_idx] = new_byte;
             }
 
+            // Expand the chunk before writing to disk
+            self.expand_chunk(&mut chunk_bytes, chunk_idx, depth);
+
             // Write the updated chunk to disk
             let dir_path = self.chunk_dir_path(depth);
             std::fs::create_dir_all(&dir_path).unwrap();
@@ -542,39 +545,7 @@ impl<
         }
 
         drop(old);
-
-        // Continue with BFS using disk
-
-        // Before the first iteration on disk, we need to create update files. Every iteration
-        // beyond the first (part of the `loop` below) will first read the update files and then
-        // expand nodes and create new update files for the next depth, but at this point we don't
-        // have any update files to read from.
-
-        std::thread::scope(|s| {
-            // Expand chunks
-            let threads = (0..self.threads as usize)
-                .map(|thread_idx| {
-                    s.spawn(move || {
-                        let mut chunk_bytes = vec![0u8; self.chunk_size_bytes];
-
-                        for chunk_idx in (0..self.num_array_chunks())
-                            .skip(thread_idx)
-                            .step_by(self.threads as usize)
-                        {
-                            tracing::info!("[Thread {thread_idx}] creating initial update files for {chunk_idx} depth {depth}");
-                            self.read_chunk(&mut chunk_bytes, chunk_idx, depth);
-                            self.expand_chunk(
-                                &mut chunk_bytes,
-                                chunk_idx,
-                                depth,
-                            );
-                        }
-                    })
-                })
-                .collect::<Vec<_>>();
-
-            threads.into_iter().for_each(|t| t.join().unwrap());
-        });
+        drop(next);
 
         loop {
             let new_positions = std::thread::scope(|s| {
