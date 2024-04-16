@@ -200,9 +200,7 @@ impl<
         updated_chunk_idx: usize,
         from_chunk_idx: usize,
     ) -> PathBuf {
-        self.update_file_directory
-            .join(format!("depth-{depth}"))
-            .join(format!("update-chunk-{updated_chunk_idx}"))
+        self.update_chunk_dir_path(depth, updated_chunk_idx)
             .join(format!("from-chunk-{from_chunk_idx}"))
     }
 
