@@ -496,53 +496,70 @@ impl<
 
         tracing::info!("starting disk BFS");
 
-        for chunk_idx in 0..self.num_array_chunks() {
-            tracing::info!("creating chunk {chunk_idx}");
+        // Create chunks and do the first expansion
+        std::thread::scope(|s| {
+            let threads = (0..self.threads as usize)
+                .map(|thread_idx| {
+                    let old = &old;
+                    let next = &next;
 
-            const UNSEEN_BYTE: u8 = UNSEEN * 0b01010101;
-            let mut chunk_bytes = vec![UNSEEN_BYTE; self.chunk_size_bytes];
+                    s.spawn(move || {
+                        for chunk_idx in (0..self.num_array_chunks())
+                            .skip(thread_idx)
+                            .step_by(self.threads as usize)
+                        {
+                            tracing::info!("[Thread {thread_idx}] creating chunk {chunk_idx}");
 
-            // Update values from `old`
-            for (_, byte_idx, bit_idx) in old
-                .iter()
-                .map(|&val| self.node_to_bit_coords(val))
-                .filter(|&(i, _, _)| chunk_idx == i)
-            {
-                let byte = chunk_bytes[byte_idx];
-                let mask = 0b11 << bit_idx;
-                let new_byte = (byte & !mask) | OLD << bit_idx;
-                chunk_bytes[byte_idx] = new_byte;
-            }
+                            const UNSEEN_BYTE: u8 = UNSEEN * 0b01010101;
+                            let mut chunk_bytes = vec![UNSEEN_BYTE; self.chunk_size_bytes];
 
-            // Update values from `next` and make them current
-            for (_, byte_idx, bit_idx) in next
-                .iter()
-                .map(|&val| self.node_to_bit_coords(val))
-                .filter(|&(i, _, _)| chunk_idx == i)
-            {
-                let byte = chunk_bytes[byte_idx];
-                let mask = 0b11 << bit_idx;
-                let current = if depth % 2 == 0 { CURRENT } else { NEXT };
-                let new_byte = (byte & !mask) | current << bit_idx;
-                chunk_bytes[byte_idx] = new_byte;
-            }
+                            // Update values from `old`
+                            for (_, byte_idx, bit_idx) in old
+                                .iter()
+                                .map(|&val| self.node_to_bit_coords(val))
+                                .filter(|&(i, _, _)| chunk_idx == i)
+                            {
+                                let byte = chunk_bytes[byte_idx];
+                                let mask = 0b11 << bit_idx;
+                                let new_byte = (byte & !mask) | OLD << bit_idx;
+                                chunk_bytes[byte_idx] = new_byte;
+                            }
 
-            // Expand the chunk before writing to disk
-            self.expand_chunk(&mut chunk_bytes, chunk_idx, depth);
+                            // Update values from `next` and make them current
+                            for (_, byte_idx, bit_idx) in next
+                                .iter()
+                                .map(|&val| self.node_to_bit_coords(val))
+                                .filter(|&(i, _, _)| chunk_idx == i)
+                            {
+                                let byte = chunk_bytes[byte_idx];
+                                let mask = 0b11 << bit_idx;
+                                let current = if depth % 2 == 0 { CURRENT } else { NEXT };
+                                let new_byte = (byte & !mask) | current << bit_idx;
+                                chunk_bytes[byte_idx] = new_byte;
+                            }
 
-            // Write the updated chunk to disk
-            let dir_path = self.chunk_dir_path(depth);
-            std::fs::create_dir_all(&dir_path).unwrap();
+                            // Expand the chunk before writing to disk
+                            self.expand_chunk(&mut chunk_bytes, chunk_idx, depth);
 
-            let file_path_tmp = dir_path.join(format!("chunk-{chunk_idx}.dat.tmp"));
-            let mut file = File::create_new(&file_path_tmp).unwrap();
+                            // Write the chunk to disk
+                            let dir_path = self.chunk_dir_path(depth);
+                            std::fs::create_dir_all(&dir_path).unwrap();
 
-            file.write_all(&chunk_bytes).unwrap();
-            drop(file);
+                            let file_path_tmp = dir_path.join(format!("chunk-{chunk_idx}.dat.tmp"));
+                            let mut file = File::create_new(&file_path_tmp).unwrap();
 
-            let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
-            std::fs::rename(file_path_tmp, file_path).unwrap();
-        }
+                            file.write_all(&chunk_bytes).unwrap();
+                            drop(file);
+
+                            let file_path = dir_path.join(format!("chunk-{chunk_idx}.dat"));
+                            std::fs::rename(file_path_tmp, file_path).unwrap();
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            threads.into_iter().for_each(|t| t.join().unwrap());
+        });
 
         drop(old);
         drop(next);
