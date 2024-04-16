@@ -188,7 +188,7 @@ impl<
         self.chunk_size_bytes * 4
     }
 
-    fn update_file_dir_path(
+    fn update_chunk_from_chunk_dir_path(
         &self,
         depth: usize,
         updated_chunk_idx: usize,
@@ -211,7 +211,8 @@ impl<
         from_chunk_idx: usize,
         update_set: &mut HashSet<u32>,
     ) {
-        let dir_path = self.update_file_dir_path(depth + 1, updated_chunk_idx, from_chunk_idx);
+        let dir_path =
+            self.update_chunk_from_chunk_dir_path(depth + 1, updated_chunk_idx, from_chunk_idx);
 
         std::fs::create_dir_all(&dir_path).unwrap();
 
