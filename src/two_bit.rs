@@ -343,7 +343,7 @@ impl<
         new_positions
     }
 
-    fn expand_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) {
+    fn expand_chunk(&self, chunk_buffer: &[u8], chunk_idx: usize, depth: usize) {
         let mut state = T::default();
         let mut expanded = [0u64; EXPANSION_NODES];
 
@@ -520,7 +520,7 @@ impl<
                             }
 
                             // Expand the chunk before writing to disk
-                            self.expand_chunk(&mut chunk_bytes, chunk_idx, depth);
+                            self.expand_chunk(&chunk_bytes, chunk_idx, depth);
 
                             // Write the chunk to disk
                             let dir_path = self.chunk_dir_path(depth, chunk_idx);
@@ -578,7 +578,7 @@ impl<
                                 tracing::info!("[Thread {t}] depth {} chunk {chunk_idx} new {new}", depth + 1);
 
                                 tracing::info!("[Thread {t}] expanding depth {} -> {} chunk {chunk_idx}", depth + 1, depth + 2);
-                                self.expand_chunk(&mut chunk_buffer, chunk_idx, depth + 1);
+                                self.expand_chunk(&chunk_buffer, chunk_idx, depth + 1);
 
                                 tracing::info!("[Thread {t}] writing depth {} chunk {chunk_idx}", depth + 1);
                                 self.write_chunk(&mut chunk_buffer, chunk_idx, depth + 1);
