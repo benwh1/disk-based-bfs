@@ -135,6 +135,7 @@ pub enum InMemoryBfsResult {
     Complete,
     OutOfMemory {
         old: HashSet<u64>,
+        current: HashSet<u64>,
         next: HashSet<u64>,
         depth: usize,
     },
@@ -440,7 +441,12 @@ impl<
             std::mem::swap(&mut current, &mut next);
         }
 
-        InMemoryBfsResult::OutOfMemory { old, next, depth }
+        InMemoryBfsResult::OutOfMemory {
+            old,
+            current,
+            next,
+            depth,
+        }
     }
 
     /// Converts an encoded node value to (chunk_idx, byte_idx, bit_idx)
@@ -470,9 +476,14 @@ impl<
     }
 
     pub fn run(&self) {
-        let (old, next, mut depth) = match self.in_memory_bfs() {
+        let (old, current, next, mut depth) = match self.in_memory_bfs() {
             InMemoryBfsResult::Complete => return,
-            InMemoryBfsResult::OutOfMemory { old, next, depth } => (old, next, depth),
+            InMemoryBfsResult::OutOfMemory {
+                old,
+                current,
+                next,
+                depth,
+            } => (old, current, next, depth),
         };
 
         tracing::info!("starting disk BFS");
@@ -482,6 +493,7 @@ impl<
             let threads = (0..self.threads)
                 .map(|thread_idx| {
                     let old = &old;
+                    let current = &current;
                     let next = &next;
 
                     s.spawn(move || {
@@ -497,6 +509,7 @@ impl<
                             // Update values from `old`
                             for (_, byte_idx, bit_idx) in old
                                 .iter()
+                                .chain(current.iter())
                                 .map(|&val| self.node_to_bit_coords(val))
                                 .filter(|&(i, _, _)| chunk_idx == i)
                             {
@@ -543,6 +556,7 @@ impl<
         });
 
         drop(old);
+        drop(current);
         drop(next);
 
         let mut chunk_buffers = vec![vec![0u8; self.chunk_size_bytes]; self.threads];
