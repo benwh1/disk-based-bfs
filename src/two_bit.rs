@@ -19,8 +19,6 @@ pub struct TwoBitBfsBuilder<
     initial_states: Option<Vec<u64>>,
     state_size: Option<u64>,
     base_directories: Option<Vec<PathBuf>>,
-    array_file_directory: Option<PathBuf>,
-    update_file_directory: Option<PathBuf>,
     initial_memory_limit: Option<usize>,
     phantom_t: PhantomData<T>,
 }
@@ -52,8 +50,6 @@ impl<
             initial_states: None,
             state_size: None,
             base_directories: None,
-            array_file_directory: None,
-            update_file_directory: None,
             initial_memory_limit: None,
             phantom_t: PhantomData,
         }
@@ -102,16 +98,6 @@ impl<
         self
     }
 
-    pub fn array_file_directory(mut self, array_file_directory: PathBuf) -> Self {
-        self.array_file_directory = Some(array_file_directory);
-        self
-    }
-
-    pub fn update_file_directory(mut self, update_file_directory: PathBuf) -> Self {
-        self.update_file_directory = Some(update_file_directory);
-        self
-    }
-
     pub fn initial_memory_limit(mut self, initial_memory_limit: usize) -> Self {
         self.initial_memory_limit = Some(initial_memory_limit);
         self
@@ -134,8 +120,6 @@ impl<
             initial_states: self.initial_states?,
             state_size: self.state_size?,
             base_directories: self.base_directories?,
-            array_file_directory: self.array_file_directory?,
-            update_file_directory: self.update_file_directory?,
             initial_memory_limit: self.initial_memory_limit?,
             phantom_t: PhantomData,
         })
@@ -169,8 +153,6 @@ pub struct TwoBitBfs<
     initial_states: Vec<u64>,
     state_size: u64,
     base_directories: Vec<PathBuf>,
-    array_file_directory: PathBuf,
-    update_file_directory: PathBuf,
     initial_memory_limit: usize,
     phantom_t: PhantomData<T>,
 }
@@ -203,7 +185,7 @@ impl<
 
     fn update_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.base_dir(chunk_idx)
-            .join(&self.update_file_directory)
+            .join("update")
             .join(format!("depth-{depth}"))
             .join(format!("update-chunk-{chunk_idx}"))
     }
@@ -220,7 +202,7 @@ impl<
 
     fn chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.base_dir(chunk_idx)
-            .join(&self.array_file_directory)
+            .join("array")
             .join(format!("depth-{depth}"))
     }
 
