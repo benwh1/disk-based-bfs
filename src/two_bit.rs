@@ -12,7 +12,7 @@ pub struct TwoBitBfsBuilder<
     const EXPANSION_NODES: usize,
 > {
     expander: Option<Expander>,
-    threads: u64,
+    threads: usize,
     chunk_size_bytes: Option<usize>,
     update_set_capacity: Option<usize>,
     capacity_check_frequency: Option<usize>,
@@ -62,7 +62,7 @@ impl<
         self
     }
 
-    pub fn threads(mut self, threads: u64) -> Self {
+    pub fn threads(mut self, threads: usize) -> Self {
         self.threads = threads;
         self
     }
@@ -154,7 +154,7 @@ pub struct TwoBitBfs<
     const EXPANSION_NODES: usize,
 > {
     expander: Expander,
-    threads: u64,
+    threads: usize,
     chunk_size_bytes: usize,
     update_set_capacity: usize,
     capacity_check_frequency: usize,
@@ -481,7 +481,7 @@ impl<
 
         // Create chunks and do the first expansion
         std::thread::scope(|s| {
-            let threads = (0..self.threads as usize)
+            let threads = (0..self.threads)
                 .map(|thread_idx| {
                     let old = &old;
                     let next = &next;
@@ -489,7 +489,7 @@ impl<
                     s.spawn(move || {
                         for chunk_idx in (0..self.num_array_chunks())
                             .skip(thread_idx)
-                            .step_by(self.threads as usize)
+                            .step_by(self.threads)
                         {
                             tracing::info!("[Thread {thread_idx}] creating chunk {chunk_idx}");
 
@@ -547,19 +547,19 @@ impl<
         drop(old);
         drop(next);
 
-        let mut chunk_buffers = vec![vec![0u8; self.chunk_size_bytes]; self.threads as usize];
+        let mut chunk_buffers = vec![vec![0u8; self.chunk_size_bytes]; self.threads];
 
         loop {
             let mut new_positions = 0;
 
-            for group_idx in (0..self.num_array_chunks()).step_by(self.threads as usize) {
+            for group_idx in (0..self.num_array_chunks()).step_by(self.threads) {
                 std::thread::scope(|s| {
                     let threads = (0..self.threads)
                         .map(|t| {
-                            let mut chunk_buffer = std::mem::take(&mut chunk_buffers[t as usize]);
+                            let mut chunk_buffer = std::mem::take(&mut chunk_buffers[t]);
 
                             s.spawn(move || {
-                                let chunk_idx = group_idx + t as usize;
+                                let chunk_idx = group_idx + t;
 
                                 // If the number of chunks isn't divisible by the number of
                                 // threads, then `chunk_idx` may be out of bounds during the last
