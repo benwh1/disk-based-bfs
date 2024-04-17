@@ -575,7 +575,7 @@ impl<
                                 tracing::info!("[Thread {t}] updating depth {depth} -> {} chunk {chunk_idx}", depth + 1);
                                 let new = self.update_chunk(&mut chunk_buffer, chunk_idx, depth);
 
-                                tracing::info!("[Thread {t}] depth {depth} chunk {chunk_idx} new {new}");
+                                tracing::info!("[Thread {t}] depth {} chunk {chunk_idx} new {new}", depth + 1);
 
                                 tracing::info!("[Thread {t}] expanding depth {} -> {} chunk {chunk_idx}", depth + 1, depth + 2);
                                 self.expand_chunk(&mut chunk_buffer, chunk_idx, depth + 1);
