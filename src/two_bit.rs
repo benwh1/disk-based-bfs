@@ -3,7 +3,7 @@ use std::{
     fs::File,
     io::{BufReader, BufWriter, Read, Write},
     marker::PhantomData,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 pub struct TwoBitBfsBuilder<
@@ -18,6 +18,7 @@ pub struct TwoBitBfsBuilder<
     capacity_check_frequency: Option<usize>,
     initial_states: Option<Vec<u64>>,
     state_size: Option<u64>,
+    base_directories: Option<Vec<PathBuf>>,
     array_file_directory: Option<PathBuf>,
     update_file_directory: Option<PathBuf>,
     initial_memory_limit: Option<usize>,
@@ -50,6 +51,7 @@ impl<
             capacity_check_frequency: None,
             initial_states: None,
             state_size: None,
+            base_directories: None,
             array_file_directory: None,
             update_file_directory: None,
             initial_memory_limit: None,
@@ -95,6 +97,11 @@ impl<
         self
     }
 
+    pub fn base_directories(mut self, base_directories: &[PathBuf]) -> Self {
+        self.base_directories = Some(base_directories.to_vec());
+        self
+    }
+
     pub fn array_file_directory(mut self, array_file_directory: PathBuf) -> Self {
         self.array_file_directory = Some(array_file_directory);
         self
@@ -126,6 +133,7 @@ impl<
             capacity_check_frequency: self.capacity_check_frequency?,
             initial_states: self.initial_states?,
             state_size: self.state_size?,
+            base_directories: self.base_directories?,
             array_file_directory: self.array_file_directory?,
             update_file_directory: self.update_file_directory?,
             initial_memory_limit: self.initial_memory_limit?,
@@ -160,6 +168,7 @@ pub struct TwoBitBfs<
     capacity_check_frequency: usize,
     initial_states: Vec<u64>,
     state_size: u64,
+    base_directories: Vec<PathBuf>,
     array_file_directory: PathBuf,
     update_file_directory: PathBuf,
     initial_memory_limit: usize,
@@ -188,8 +197,13 @@ impl<
         self.chunk_size_bytes * 4
     }
 
+    fn base_dir(&self, chunk_idx: usize) -> &Path {
+        &self.base_directories[chunk_idx % self.base_directories.len()]
+    }
+
     fn update_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
-        self.update_file_directory
+        self.base_dir(chunk_idx)
+            .join(&self.update_file_directory)
             .join(format!("depth-{depth}"))
             .join(format!("update-chunk-{chunk_idx}"))
     }
@@ -204,12 +218,14 @@ impl<
             .join(format!("from-chunk-{from_chunk_idx}"))
     }
 
-    fn chunk_dir_path(&self, depth: usize) -> PathBuf {
-        self.array_file_directory.join(format!("depth-{depth}"))
+    fn chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+        self.base_dir(chunk_idx)
+            .join(&self.array_file_directory)
+            .join(format!("depth-{depth}"))
     }
 
     fn chunk_file_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
-        self.chunk_dir_path(depth)
+        self.chunk_dir_path(depth, chunk_idx)
             .join(format!("chunk-{chunk_idx}.dat"))
     }
 
@@ -255,7 +271,7 @@ impl<
     }
 
     fn write_chunk(&self, chunk_buffer: &[u8], chunk_idx: usize, depth: usize) {
-        let dir_path = self.chunk_dir_path(depth);
+        let dir_path = self.chunk_dir_path(depth, chunk_idx);
 
         std::fs::create_dir_all(&dir_path).unwrap();
 
@@ -525,7 +541,7 @@ impl<
                             self.expand_chunk(&mut chunk_bytes, chunk_idx, depth);
 
                             // Write the chunk to disk
-                            let dir_path = self.chunk_dir_path(depth);
+                            let dir_path = self.chunk_dir_path(depth, chunk_idx);
                             std::fs::create_dir_all(&dir_path).unwrap();
 
                             let file_path_tmp = dir_path.join(format!("chunk-{chunk_idx}.dat.tmp"));
