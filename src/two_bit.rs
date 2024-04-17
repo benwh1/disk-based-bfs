@@ -18,7 +18,7 @@ pub struct TwoBitBfsBuilder<
     capacity_check_frequency: Option<usize>,
     initial_states: Option<Vec<u64>>,
     state_size: Option<u64>,
-    base_directories: Option<Vec<PathBuf>>,
+    root_directories: Option<Vec<PathBuf>>,
     initial_memory_limit: Option<usize>,
     phantom_t: PhantomData<T>,
 }
@@ -49,7 +49,7 @@ impl<
             capacity_check_frequency: None,
             initial_states: None,
             state_size: None,
-            base_directories: None,
+            root_directories: None,
             initial_memory_limit: None,
             phantom_t: PhantomData,
         }
@@ -93,8 +93,8 @@ impl<
         self
     }
 
-    pub fn base_directories(mut self, base_directories: &[PathBuf]) -> Self {
-        self.base_directories = Some(base_directories.to_vec());
+    pub fn root_directories(mut self, root_directories: &[PathBuf]) -> Self {
+        self.root_directories = Some(root_directories.to_vec());
         self
     }
 
@@ -119,7 +119,7 @@ impl<
             capacity_check_frequency: self.capacity_check_frequency?,
             initial_states: self.initial_states?,
             state_size: self.state_size?,
-            base_directories: self.base_directories?,
+            root_directories: self.root_directories?,
             initial_memory_limit: self.initial_memory_limit?,
             phantom_t: PhantomData,
         })
@@ -152,7 +152,7 @@ pub struct TwoBitBfs<
     capacity_check_frequency: usize,
     initial_states: Vec<u64>,
     state_size: u64,
-    base_directories: Vec<PathBuf>,
+    root_directories: Vec<PathBuf>,
     initial_memory_limit: usize,
     phantom_t: PhantomData<T>,
 }
@@ -179,12 +179,12 @@ impl<
         self.chunk_size_bytes * 4
     }
 
-    fn base_dir(&self, chunk_idx: usize) -> &Path {
-        &self.base_directories[chunk_idx % self.base_directories.len()]
+    fn root_dir(&self, chunk_idx: usize) -> &Path {
+        &self.root_directories[chunk_idx % self.root_directories.len()]
     }
 
     fn update_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
-        self.base_dir(chunk_idx)
+        self.root_dir(chunk_idx)
             .join("update")
             .join(format!("depth-{depth}"))
             .join(format!("update-chunk-{chunk_idx}"))
@@ -201,7 +201,7 @@ impl<
     }
 
     fn chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
-        self.base_dir(chunk_idx)
+        self.root_dir(chunk_idx)
             .join("array")
             .join(format!("depth-{depth}"))
     }
