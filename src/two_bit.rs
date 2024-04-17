@@ -237,7 +237,7 @@ impl<
 
         let part = std::fs::read_dir(&dir_path).unwrap().flatten().count();
         let file_path_tmp = dir_path.join(format!("part-{part}.dat.tmp"));
-        let file = File::create_new(&file_path_tmp).unwrap();
+        let file = File::create(&file_path_tmp).unwrap();
         let mut writer = BufWriter::new(file);
 
         for val in update_set.drain() {
@@ -258,7 +258,7 @@ impl<
         std::fs::create_dir_all(&dir_path).unwrap();
 
         let file_path_tmp = dir_path.join(format!("chunk-{chunk_idx}.dat.tmp"));
-        let mut file = File::create_new(&file_path_tmp).unwrap();
+        let mut file = File::create(&file_path_tmp).unwrap();
 
         file.write_all(chunk_buffer).unwrap();
         drop(file);
@@ -527,7 +527,7 @@ impl<
                             std::fs::create_dir_all(&dir_path).unwrap();
 
                             let file_path_tmp = dir_path.join(format!("chunk-{chunk_idx}.dat.tmp"));
-                            let mut file = File::create_new(&file_path_tmp).unwrap();
+                            let mut file = File::create(&file_path_tmp).unwrap();
 
                             file.write_all(&chunk_bytes).unwrap();
                             drop(file);
