@@ -273,7 +273,7 @@ impl<
         update_set: &mut HashSet<u32>,
     ) {
         let dir_path =
-            self.update_chunk_from_chunk_dir_path(depth + 1, updated_chunk_idx, from_chunk_idx);
+            self.update_chunk_from_chunk_dir_path(depth, updated_chunk_idx, from_chunk_idx);
 
         std::fs::create_dir_all(&dir_path).unwrap();
 
@@ -408,7 +408,7 @@ impl<
 
         // Write remaining update files
         for (idx, set) in update_sets.iter_mut().enumerate() {
-            self.write_update_file(depth + 1, idx, chunk_idx, set);
+            self.write_update_file(depth + 2, idx, chunk_idx, set);
         }
 
         new_positions
@@ -463,7 +463,7 @@ impl<
                                 if set.len() + max_new_nodes > set.capacity() {
                                     // Possible to reach capacity on the next block of expansions, so
                                     // write update file to disk
-                                    self.write_update_file(depth + 1, idx, chunk_idx, set);
+                                    self.write_update_file(depth + 2, idx, chunk_idx, set);
                                     set.clear();
                                 }
                             }
@@ -537,7 +537,7 @@ impl<
                             if set.len() + max_new_nodes > set.capacity() {
                                 // Possible to reach capacity on the next block of expansions, so
                                 // write update file to disk
-                                self.write_update_file(depth + 1, idx, chunk_idx, set);
+                                self.write_update_file(depth + 2, idx, chunk_idx, set);
                                 set.clear();
                             }
                         }
