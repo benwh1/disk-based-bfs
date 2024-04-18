@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub struct TwoBitBfsBuilder<
+pub struct BfsBuilder<
     T: Default + Sync,
     Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
     const EXPANSION_NODES: usize,
@@ -27,7 +27,7 @@ impl<
         T: Default + Sync,
         Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
         const EXPANSION_NODES: usize,
-    > Default for TwoBitBfsBuilder<T, Expander, EXPANSION_NODES>
+    > Default for BfsBuilder<T, Expander, EXPANSION_NODES>
 {
     fn default() -> Self {
         Self::new()
@@ -38,7 +38,7 @@ impl<
         T: Default + Sync,
         Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
         const EXPANSION_NODES: usize,
-    > TwoBitBfsBuilder<T, Expander, EXPANSION_NODES>
+    > BfsBuilder<T, Expander, EXPANSION_NODES>
 {
     pub fn new() -> Self {
         Self {
@@ -103,7 +103,7 @@ impl<
         self
     }
 
-    pub fn build(self) -> Option<TwoBitBfs<T, Expander, EXPANSION_NODES>> {
+    pub fn build(self) -> Option<Bfs<T, Expander, EXPANSION_NODES>> {
         // Require that all chunks are the same size
         let chunk_size_bytes = self.chunk_size_bytes?;
         let state_size = self.state_size? as usize;
@@ -111,7 +111,7 @@ impl<
             return None;
         }
 
-        Some(TwoBitBfs {
+        Some(Bfs {
             expander: self.expander?,
             threads: self.threads,
             chunk_size_bytes: self.chunk_size_bytes?,
@@ -141,7 +141,7 @@ pub enum InMemoryBfsResult {
     },
 }
 
-pub struct TwoBitBfs<
+pub struct Bfs<
     T: Default + Sync,
     Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
     const EXPANSION_NODES: usize,
@@ -162,7 +162,7 @@ impl<
         T: Default + Sync,
         Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
         const EXPANSION_NODES: usize,
-    > TwoBitBfs<T, Expander, EXPANSION_NODES>
+    > Bfs<T, Expander, EXPANSION_NODES>
 {
     fn expand(&self, state: &mut T, encoded: u64, nodes: &mut [u64; EXPANSION_NODES]) {
         (self.expander)(state, encoded, nodes);
