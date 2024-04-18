@@ -414,6 +414,25 @@ impl<
         new_positions
     }
 
+    fn check_update_set_capacity(
+        &self,
+        update_sets: &mut [HashSet<u32>],
+        chunk_idx: usize,
+        depth: usize,
+    ) {
+        // Check if any of the update sets may go over capacity
+        let max_new_nodes = self.capacity_check_frequency * EXPANSION_NODES;
+
+        for (idx, set) in update_sets.iter_mut().enumerate() {
+            if set.len() + max_new_nodes > set.capacity() {
+                // Possible to reach capacity on the next block of expansions, so
+                // write update file to disk
+                self.write_update_file(depth, idx, chunk_idx, set);
+                set.clear();
+            }
+        }
+    }
+
     fn update_and_expand_from_update_files(
         &self,
         chunk_buffer: &mut [u8],
@@ -456,17 +475,7 @@ impl<
                         new_positions += 1;
 
                         if new_positions as usize % self.capacity_check_frequency == 0 {
-                            // Check if any of the update sets may go over capacity
-                            let max_new_nodes = self.capacity_check_frequency * EXPANSION_NODES;
-
-                            for (idx, set) in update_sets.iter_mut().enumerate() {
-                                if set.len() + max_new_nodes > set.capacity() {
-                                    // Possible to reach capacity on the next block of expansions, so
-                                    // write update file to disk
-                                    self.write_update_file(depth + 2, idx, chunk_idx, set);
-                                    set.clear();
-                                }
-                            }
+                            self.check_update_set_capacity(update_sets, chunk_idx, depth + 2);
                         }
 
                         // Expand the node
@@ -530,17 +539,7 @@ impl<
                     new_positions += 1;
 
                     if new_positions as usize % self.capacity_check_frequency == 0 {
-                        // Check if any of the update sets may go over capacity
-                        let max_new_nodes = self.capacity_check_frequency * EXPANSION_NODES;
-
-                        for (idx, set) in update_sets.iter_mut().enumerate() {
-                            if set.len() + max_new_nodes > set.capacity() {
-                                // Possible to reach capacity on the next block of expansions, so
-                                // write update file to disk
-                                self.write_update_file(depth + 2, idx, chunk_idx, set);
-                                set.clear();
-                            }
-                        }
+                        self.check_update_set_capacity(update_sets, chunk_idx, depth + 2);
                     }
 
                     // Expand the node
