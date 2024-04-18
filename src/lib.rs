@@ -4,4 +4,4 @@
 #![deny(clippy::map_unwrap_or)]
 #![deny(clippy::semicolon_if_nothing_returned)]
 
-pub mod two_bit;
+pub mod one_bit;
