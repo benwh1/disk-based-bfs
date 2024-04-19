@@ -249,6 +249,45 @@ impl<
             .join(format!("update-chunk-{chunk_idx}.dat"))
     }
 
+    fn new_positions_data_dir_path(&self, chunk_idx: usize) -> PathBuf {
+        self.root_dir(chunk_idx).join("new-positions")
+    }
+
+    fn new_positions_data_file_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+        self.new_positions_data_dir_path(chunk_idx)
+            .join(format!("depth-{depth}.dat"))
+    }
+
+    fn read_new_positions_data_file(&self, depth: usize, chunk_idx: usize) -> u64 {
+        let file_path = self.new_positions_data_file_path(depth, chunk_idx);
+        let mut file = File::open(file_path).unwrap();
+        let mut buf = [0u8; 8];
+        file.read_exact(&mut buf).unwrap();
+        u64::from_le_bytes(buf)
+    }
+
+    fn write_new_positions_data_file(&self, depth: usize, chunk_idx: usize, new: u64) {
+        let dir_path = self.new_positions_data_dir_path(chunk_idx);
+        std::fs::create_dir_all(&dir_path).unwrap();
+
+        let file_path_tmp = self
+            .new_positions_data_file_path(depth, chunk_idx)
+            .with_extension("tmp");
+        let mut file = File::create(&file_path_tmp).unwrap();
+        file.write_all(&new.to_le_bytes()).unwrap();
+        drop(file);
+
+        let file_path = self.new_positions_data_file_path(depth, chunk_idx);
+        std::fs::rename(file_path_tmp, file_path).unwrap();
+    }
+
+    fn delete_new_positions_data_file(&self, depth: usize, chunk_idx: usize) {
+        let file_path = self.new_positions_data_file_path(depth, chunk_idx);
+        if file_path.exists() {
+            std::fs::remove_file(file_path).unwrap();
+        }
+    }
+
     fn read_state(&self) -> State {
         let file_path = self.state_file_path();
         let str = std::fs::read_to_string(file_path).unwrap();
@@ -751,6 +790,7 @@ impl<
 
                         tracing::info!("[Thread {t}] updating and expanding depth {depth} -> {} chunk {chunk_idx}", depth + 1);
                         let new = self.update_and_expand_chunk(&mut chunk_buffer, chunk_idx, depth);
+                        self.write_new_positions_data_file(depth, chunk_idx, new);
 
                         tracing::info!("[Thread {t}] depth {} chunk {chunk_idx} new {new}", depth + 1);
 
