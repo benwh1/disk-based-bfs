@@ -697,6 +697,177 @@ impl<
         (byte_idx, bit_idx)
     }
 
+    fn create_initial_update_files(&self, next: &HashSet<u64>, depth: usize) {
+        // Write values from `next` to initial update files
+        let mut update_files = (0..self.num_array_chunks())
+            .map(|chunk_idx| {
+                let dir_path = self.update_chunk_from_chunk_dir_path(depth + 1, chunk_idx, 0);
+                std::fs::create_dir_all(&dir_path).unwrap();
+                let file_path = dir_path.join("part-0.dat");
+                let file = File::create(&file_path).unwrap();
+                BufWriter::new(file)
+            })
+            .collect::<Vec<_>>();
+
+        for &val in next {
+            let (chunk_idx, chunk_offset) = self.node_to_chunk_coords(val);
+            update_files[chunk_idx]
+                .write(&chunk_offset.to_le_bytes())
+                .unwrap();
+        }
+    }
+
+    fn process_chunk_group(
+        &self,
+        chunk_buffers: &mut [Vec<u8>],
+        create_chunk_hashsets: Option<&[&HashSet<u64>]>,
+        group_idx: usize,
+        depth: usize,
+    ) -> u64 {
+        let mut new_positions = 0;
+
+        std::thread::scope(|s| {
+            let threads = (0..self.threads)
+                .map(|t| {
+                    let mut chunk_buffer = std::mem::take(&mut chunk_buffers[t]);
+
+                    s.spawn(move || {
+                        let chunk_idx = group_idx + t;
+
+                        // If the number of chunks isn't divisible by the number of
+                        // threads, then `chunk_idx` may be out of bounds during the last
+                        // group of threads.
+                        if chunk_idx >= self.num_array_chunks() {
+                            return None;
+                        }
+
+                        if let Some(hashsets) = create_chunk_hashsets {
+                            tracing::info!("[Thread {t}] creating depth {depth} chunk {chunk_idx}");
+                            self.create_chunk(&mut chunk_buffer, hashsets, chunk_idx);
+                        } else{
+                            tracing::info!("[Thread {t}] reading depth {depth} chunk {chunk_idx}");
+                            self.read_chunk(&mut chunk_buffer, chunk_idx, depth);
+                        }
+
+                        tracing::info!("[Thread {t}] updating and expanding depth {depth} -> {} chunk {chunk_idx}", depth + 1);
+                        let new = self.update_and_expand_chunk(&mut chunk_buffer, chunk_idx, depth);
+
+                        tracing::info!("[Thread {t}] depth {} chunk {chunk_idx} new {new}", depth + 1);
+
+                        tracing::info!("[Thread {t}] writing depth {} chunk {chunk_idx}", depth + 1);
+                        self.write_chunk(&mut chunk_buffer, chunk_idx, depth + 1);
+
+                        tracing::info!("[Thread {t}] deleting depth {depth} chunk {chunk_idx}");
+                        self.delete_chunk_file(depth, chunk_idx);
+
+                        tracing::info!("[Thread {t}] deleting update files for depth {depth} -> {} chunk {chunk_idx}", depth + 1);
+                        self.delete_update_files(depth + 1, chunk_idx);
+
+                        tracing::info!("[Thread {t}] deleting update array for depth {depth} -> {} chunk {chunk_idx}", depth + 1);
+                        self.delete_update_array(depth + 1, chunk_idx);
+
+                        Some((chunk_buffer, new))
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            for (t, thread) in threads.into_iter().enumerate() {
+                if let Some((mut chunk_buffer, new)) = thread.join().unwrap() {
+                    new_positions += new;
+
+                    // Swap the buffer back into place so the next group of threads can
+                    // reuse it
+                    std::mem::swap(&mut chunk_buffers[t], &mut chunk_buffer);
+                }
+            }
+        });
+
+        new_positions
+    }
+
+    fn create_and_process_chunk_group(
+        &self,
+        chunk_buffers: &mut [Vec<u8>],
+        hashsets: &[&HashSet<u64>],
+        group_idx: usize,
+        depth: usize,
+    ) -> u64 {
+        self.process_chunk_group(chunk_buffers, Some(hashsets), group_idx, depth)
+    }
+
+    fn read_and_process_chunk_group(
+        &self,
+        chunk_buffers: &mut [Vec<u8>],
+        group_idx: usize,
+        depth: usize,
+    ) -> u64 {
+        self.process_chunk_group(chunk_buffers, None, group_idx, depth)
+    }
+
+    fn check_for_update_files_compression(&self, update_buffers: &mut [Vec<u8>], depth: usize) {
+        std::thread::scope(|s| {
+            let threads = (0..self.threads)
+                .map(|t| {
+                    let mut update_buffer = std::mem::take(&mut update_buffers[t]);
+
+                    s.spawn(move || {
+                        for chunk_idx in
+                            (0..self.num_array_chunks()).skip(t).step_by(self.threads)
+                        {
+                            let path = self.update_chunk_dir_path(depth + 2, chunk_idx);
+                            let used_space = fs_extra::dir::get_size(&path).unwrap();
+
+                            if used_space > self.update_files_compression_threshold {
+                                tracing::info!(
+                                    "[Thread {t}] compressing update files for depth {} -> {} chunk {chunk_idx}",
+                                    depth + 1,
+                                    depth + 2,
+                                );
+                                self.compress_update_files(
+                                    &mut update_buffer,
+                                    chunk_idx,
+                                    depth + 2,
+                                );
+                            }
+                        }
+
+                        update_buffer
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            for (t, mut update_buffer) in threads
+                .into_iter()
+                .map(|thread| thread.join().unwrap())
+                .enumerate()
+            {
+                std::mem::swap(&mut update_buffers[t], &mut update_buffer);
+            }
+        });
+    }
+
+    fn end_of_depth_cleanup(&self, depth: usize) {
+        // We now have the array at depth `depth + 1`, and update files/arrays for depth
+        // `depth + 2`, so we can delete the directories (which should be empty) for the
+        // previous depth.
+        for root_idx in 0..self.root_directories.len() {
+            let dir_path = self.chunk_dir_path(depth, root_idx);
+            if dir_path.exists() {
+                std::fs::remove_dir_all(dir_path).unwrap();
+            }
+
+            let dir_path = self.update_depth_dir_path(depth + 1, root_idx);
+            if dir_path.exists() {
+                std::fs::remove_dir_all(dir_path).unwrap();
+            }
+
+            let dir_path = self.update_array_dir_path(depth + 1, root_idx);
+            if dir_path.exists() {
+                std::fs::remove_dir_all(dir_path).unwrap();
+            }
+        }
+    }
+
     pub fn run(&self) {
         let (mut old, mut current, next, mut depth) = match self.in_memory_bfs() {
             InMemoryBfsResult::Complete => return,
@@ -710,29 +881,11 @@ impl<
 
         tracing::info!("starting disk BFS");
 
-        // Write values from `next` to initial update files
-        let mut update_files = (0..self.num_array_chunks())
-            .map(|chunk_idx| {
-                let dir_path = self.update_chunk_from_chunk_dir_path(depth + 1, chunk_idx, 0);
-                std::fs::create_dir_all(&dir_path).unwrap();
-                let file_path = dir_path.join("part-0.dat");
-                let file = File::create(&file_path).unwrap();
-                BufWriter::new(file)
-            })
-            .collect::<Vec<_>>();
+        self.create_initial_update_files(&next, depth);
 
-        for &val in &next {
-            let (chunk_idx, chunk_offset) = self.node_to_chunk_coords(val);
-            update_files[chunk_idx]
-                .write(&chunk_offset.to_le_bytes())
-                .unwrap();
-        }
-
-        drop(update_files);
         drop(next);
 
         let mut first_iteration_on_disk = true;
-
         let mut chunk_buffers = vec![vec![0u8; self.chunk_size_bytes]; self.threads];
 
         loop {
@@ -741,111 +894,20 @@ impl<
             for group_idx in (0..self.num_array_chunks()).step_by(self.threads) {
                 if first_iteration_on_disk {
                     self.write_state(State::FirstIterationOnDisk { depth, group_idx });
+                    new_positions += self.create_and_process_chunk_group(
+                        &mut chunk_buffers,
+                        &[&old, &current],
+                        group_idx,
+                        depth,
+                    );
                 } else {
                     self.write_state(State::UpdateAndExpand { depth, group_idx });
+                    new_positions +=
+                        self.read_and_process_chunk_group(&mut chunk_buffers, group_idx, depth);
                 }
 
-                let old = &old;
-                let current = &current;
-
-                std::thread::scope(|s| {
-                    let threads = (0..self.threads)
-                        .map(|t| {
-                            let mut chunk_buffer = std::mem::take(&mut chunk_buffers[t]);
-
-                            s.spawn(move || {
-                                let chunk_idx = group_idx + t;
-
-                                // If the number of chunks isn't divisible by the number of
-                                // threads, then `chunk_idx` may be out of bounds during the last
-                                // group of threads.
-                                if chunk_idx >= self.num_array_chunks() {
-                                    return None;
-                                }
-
-                                if first_iteration_on_disk {
-                                    tracing::info!("[Thread {t}] creating depth {depth} chunk {chunk_idx}");
-                                    self.create_chunk(&mut chunk_buffer, &[&old, &current], chunk_idx);
-                                } else{
-                                    tracing::info!("[Thread {t}] reading depth {depth} chunk {chunk_idx}");
-                                    self.read_chunk(&mut chunk_buffer, chunk_idx, depth);
-                                }
-
-                                tracing::info!("[Thread {t}] updating and expanding depth {depth} -> {} chunk {chunk_idx}", depth + 1);
-                                let new = self.update_and_expand_chunk(&mut chunk_buffer, chunk_idx, depth);
-
-                                tracing::info!("[Thread {t}] depth {} chunk {chunk_idx} new {new}", depth + 1);
-
-                                tracing::info!("[Thread {t}] writing depth {} chunk {chunk_idx}", depth + 1);
-                                self.write_chunk(&mut chunk_buffer, chunk_idx, depth + 1);
-
-                                tracing::info!("[Thread {t}] deleting depth {depth} chunk {chunk_idx}");
-                                self.delete_chunk_file(depth, chunk_idx);
-
-                                tracing::info!("[Thread {t}] deleting update files for depth {depth} -> {} chunk {chunk_idx}", depth + 1);
-                                self.delete_update_files(depth + 1, chunk_idx);
-
-                                tracing::info!("[Thread {t}] deleting update array for depth {depth} -> {} chunk {chunk_idx}", depth + 1);
-                                self.delete_update_array(depth + 1, chunk_idx);
-
-                                Some((chunk_buffer, new))
-                            })
-                        })
-                        .collect::<Vec<_>>();
-
-                    for (t, thread) in threads.into_iter().enumerate() {
-                        if let Some((mut chunk_buffer, new)) = thread.join().unwrap() {
-                            new_positions += new;
-
-                            // Swap the buffer back into place so the next group of threads can
-                            // reuse it
-                            std::mem::swap(&mut chunk_buffers[t], &mut chunk_buffer);
-                        }
-                    }
-                });
-
                 self.write_state(State::CompressUpdateFiles { depth, group_idx });
-
-                std::thread::scope(|s| {
-                    // Check for chunks with large update files
-                    let threads = (0..self.threads)
-                        .map(|t| {
-                            let mut update_buffer = std::mem::take(&mut chunk_buffers[t]);
-
-                            s.spawn(move || {
-                                for chunk_idx in
-                                    (0..self.num_array_chunks()).skip(t).step_by(self.threads)
-                                {
-                                    let path = self.update_chunk_dir_path(depth + 2, chunk_idx);
-                                    let used_space = fs_extra::dir::get_size(&path).unwrap();
-
-                                    if used_space > self.update_files_compression_threshold {
-                                        tracing::info!(
-                                            "[Thread {t}] compressing update files for depth {} -> {} chunk {chunk_idx}",
-                                            depth + 1,
-                                            depth + 2,
-                                        );
-                                        self.compress_update_files(
-                                            &mut update_buffer,
-                                            chunk_idx,
-                                            depth + 2,
-                                        );
-                                    }
-                                }
-
-                                update_buffer
-                            })
-                        })
-                        .collect::<Vec<_>>();
-
-                    for (t, mut update_buffer) in threads
-                        .into_iter()
-                        .map(|thread| thread.join().unwrap())
-                        .enumerate()
-                    {
-                        std::mem::swap(&mut chunk_buffers[t], &mut update_buffer);
-                    }
-                });
+                self.check_for_update_files_compression(&mut chunk_buffers, depth);
             }
 
             if first_iteration_on_disk {
@@ -857,29 +919,10 @@ impl<
                 current.shrink_to_fit();
             }
 
-            self.write_state(State::Cleanup { depth });
-
             tracing::info!("depth {} new {new_positions}", depth + 1);
 
-            // We now have the array at depth `depth + 1`, and update files/arrays for depth
-            // `depth + 2`, so we can delete the directories (which should be empty) for the
-            // previous depth.
-            for root_idx in 0..self.root_directories.len() {
-                let dir_path = self.chunk_dir_path(depth, root_idx);
-                if dir_path.exists() {
-                    std::fs::remove_dir_all(dir_path).unwrap();
-                }
-
-                let dir_path = self.update_depth_dir_path(depth + 1, root_idx);
-                if dir_path.exists() {
-                    std::fs::remove_dir_all(dir_path).unwrap();
-                }
-
-                let dir_path = self.update_array_dir_path(depth + 1, root_idx);
-                if dir_path.exists() {
-                    std::fs::remove_dir_all(dir_path).unwrap();
-                }
-            }
+            self.write_state(State::Cleanup { depth });
+            self.end_of_depth_cleanup(depth);
 
             if new_positions == 0 {
                 break;
