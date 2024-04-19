@@ -933,29 +933,23 @@ impl<
         new_positions
     }
 
-    fn main_bfs_loop(&self, chunk_buffers: &mut [Vec<u8>], mut depth: usize) {
-        loop {
-            let mut new_positions = 0;
+    fn do_iteration(&self, chunk_buffers: &mut [Vec<u8>], depth: usize) -> u64 {
+        let mut new = 0;
 
-            for group_idx in (0..self.num_array_chunks()).step_by(self.threads) {
-                self.write_state(State::UpdateAndExpand { depth, group_idx });
-                new_positions += self.read_and_process_chunk_group(chunk_buffers, group_idx, depth);
+        for group_idx in (0..self.num_array_chunks()).step_by(self.threads) {
+            self.write_state(State::UpdateAndExpand { depth, group_idx });
+            new += self.read_and_process_chunk_group(chunk_buffers, group_idx, depth);
 
-                self.write_state(State::CompressUpdateFiles { depth, group_idx });
-                self.check_for_update_files_compression(chunk_buffers, depth);
-            }
-
-            tracing::info!("depth {} new {new_positions}", depth + 1);
-
-            self.write_state(State::Cleanup { depth });
-            self.end_of_depth_cleanup(depth);
-
-            if new_positions == 0 {
-                break;
-            }
-
-            depth += 1;
+            self.write_state(State::CompressUpdateFiles { depth, group_idx });
+            self.check_for_update_files_compression(chunk_buffers, depth);
         }
+
+        tracing::info!("depth {} new {new}", depth + 1);
+
+        self.write_state(State::Cleanup { depth });
+        self.end_of_depth_cleanup(depth);
+
+        new
     }
 
     pub fn run(&self) {
@@ -988,7 +982,9 @@ impl<
 
         depth += 1;
 
-        self.main_bfs_loop(&mut chunk_buffers, depth);
+        while self.do_iteration(&mut chunk_buffers, depth) != 0 {
+            depth += 1;
+        }
 
         self.write_state(State::Done);
     }
