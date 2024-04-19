@@ -361,8 +361,6 @@ impl<
         {
             chunk_buffer[byte_idx] |= 1 << bit_idx;
         }
-
-        self.write_chunk(&chunk_buffer, chunk_idx, depth);
     }
 
     fn write_chunk(&self, chunk_buffer: &[u8], chunk_idx: usize, depth: usize) {
@@ -707,7 +705,7 @@ impl<
     }
 
     pub fn run(&self) {
-        let (old, current, next, mut depth) = match self.in_memory_bfs() {
+        let (mut old, mut current, next, mut depth) = match self.in_memory_bfs() {
             InMemoryBfsResult::Complete => return,
             InMemoryBfsResult::OutOfMemory {
                 old,
@@ -740,17 +738,7 @@ impl<
         drop(update_files);
         drop(next);
 
-        self.write_state(State::CreateChunks { depth });
-
-        // Create chunks
-        let mut chunk_buffer = vec![0; self.chunk_size_bytes];
-
-        for chunk_idx in 0..self.num_array_chunks() {
-            self.create_chunk(&mut chunk_buffer, &old, &current, chunk_idx, depth);
-        }
-
-        drop(old);
-        drop(current);
+        let mut first_iteration_on_disk = true;
 
         let mut chunk_buffers = vec![vec![0u8; self.chunk_size_bytes]; self.threads];
 
@@ -759,6 +747,9 @@ impl<
 
             for group_idx in (0..self.num_array_chunks()).step_by(self.threads) {
                 self.write_state(State::UpdateAndExpand { depth, group_idx });
+
+                let old = &old;
+                let current = &current;
 
                 std::thread::scope(|s| {
                     let threads = (0..self.threads)
@@ -775,8 +766,13 @@ impl<
                                     return None;
                                 }
 
-                                tracing::info!("[Thread {t}] reading depth {depth} chunk {chunk_idx}");
-                                self.read_chunk(&mut chunk_buffer, chunk_idx, depth);
+                                if first_iteration_on_disk {
+                                    tracing::info!("[Thread {t}] creating depth {depth} chunk {chunk_idx}");
+                                    self.create_chunk(&mut chunk_buffer, &old, &current, chunk_idx, depth);
+                                } else{
+                                    tracing::info!("[Thread {t}] reading depth {depth} chunk {chunk_idx}");
+                                    self.read_chunk(&mut chunk_buffer, chunk_idx, depth);
+                                }
 
                                 tracing::info!("[Thread {t}] updating and expanding depth {depth} -> {} chunk {chunk_idx}", depth + 1);
                                 let new = self.update_and_expand_chunk(&mut chunk_buffer, chunk_idx, depth);
@@ -853,6 +849,15 @@ impl<
                         std::mem::swap(&mut chunk_buffers[t], &mut update_buffer);
                     }
                 });
+            }
+
+            if first_iteration_on_disk {
+                first_iteration_on_disk = false;
+
+                old.clear();
+                old.shrink_to_fit();
+                current.clear();
+                current.shrink_to_fit();
             }
 
             self.write_state(State::Cleanup { depth });
