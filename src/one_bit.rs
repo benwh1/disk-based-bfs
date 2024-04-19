@@ -885,6 +885,8 @@ impl<
             self.check_for_update_files_compression(chunk_buffers, depth);
         }
 
+        tracing::info!("depth {} new {new_positions}", depth + 1);
+
         self.write_state(State::Cleanup { depth });
         self.end_of_depth_cleanup(depth);
 
@@ -935,7 +937,6 @@ impl<
         let mut chunk_buffers = vec![vec![0u8; self.chunk_size_bytes]; self.threads];
 
         let new_positions = self.first_disk_iteration(&mut chunk_buffers, &[&old, &current], depth);
-        tracing::info!("depth {} new {new_positions}", depth + 1);
 
         if new_positions == 0 {
             self.write_state(State::Done);
