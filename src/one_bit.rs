@@ -6,6 +6,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use serde_derive::{Deserialize, Serialize};
+
 pub struct BfsBuilder<
     T: Default + Sync,
     Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
@@ -147,6 +149,14 @@ pub enum InMemoryBfsResult {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum State {
+    CreateChunks { depth: usize },
+    UpdateAndExpand { depth: usize, group_idx: usize },
+    CompressUpdateFiles { depth: usize, group_idx: usize },
+    Cleanup { depth: usize },
+}
+
 pub struct Bfs<
     T: Default + Sync,
     Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
@@ -191,6 +201,10 @@ impl<
         &self.root_directories[chunk_idx % self.root_directories.len()]
     }
 
+    fn state_file_path(&self) -> PathBuf {
+        self.root_dir(0).join("state.dat")
+    }
+
     fn update_depth_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.root_dir(chunk_idx)
             .join("update")
@@ -232,6 +246,20 @@ impl<
     fn update_array_file_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.update_array_dir_path(depth, chunk_idx)
             .join(format!("update-chunk-{chunk_idx}.dat"))
+    }
+
+    fn read_state(&self) -> State {
+        let file_path = self.state_file_path();
+        let str = std::fs::read_to_string(file_path).unwrap();
+        serde_json::from_str(&str).unwrap()
+    }
+
+    fn write_state(&self, state: State) {
+        let str = serde_json::to_string(&state).unwrap();
+        let file_path_tmp = self.state_file_path().with_extension("tmp");
+        std::fs::write(&file_path_tmp, &str).unwrap();
+        let file_path = self.state_file_path();
+        std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
     fn read_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) {
@@ -688,6 +716,8 @@ impl<
         drop(update_files);
         drop(next);
 
+        self.write_state(State::CreateChunks { depth });
+
         // Create chunks
         let mut chunk_bytes = vec![0; self.chunk_size_bytes];
 
@@ -716,6 +746,8 @@ impl<
             let mut new_positions = 0;
 
             for group_idx in (0..self.num_array_chunks()).step_by(self.threads) {
+                self.write_state(State::UpdateAndExpand { depth, group_idx });
+
                 std::thread::scope(|s| {
                     let threads = (0..self.threads)
                         .map(|t| {
@@ -765,7 +797,11 @@ impl<
                             std::mem::swap(&mut chunk_buffers[t], &mut chunk_buffer);
                         }
                     }
+                });
 
+                self.write_state(State::CompressUpdateFiles { depth, group_idx });
+
+                std::thread::scope(|s| {
                     // Check for chunks with large update files
                     let threads = (0..self.threads)
                         .map(|t| {
@@ -806,6 +842,8 @@ impl<
                     }
                 });
             }
+
+            self.write_state(State::Cleanup { depth });
 
             tracing::info!("depth {} new {new_positions}", depth + 1);
 
