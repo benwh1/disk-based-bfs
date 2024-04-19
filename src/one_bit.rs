@@ -345,21 +345,20 @@ impl<
     fn create_chunk(
         &self,
         chunk_buffer: &mut [u8],
-        old: &HashSet<u64>,
-        current: &HashSet<u64>,
+        hashsets: &[&HashSet<u64>],
         chunk_idx: usize,
         depth: usize,
     ) {
         chunk_buffer.fill(0);
 
-        // Update values from `old` and `current`
-        for (_, byte_idx, bit_idx) in old
-            .iter()
-            .chain(current.iter())
-            .map(|&val| self.node_to_bit_coords(val))
-            .filter(|&(i, _, _)| chunk_idx == i)
-        {
-            chunk_buffer[byte_idx] |= 1 << bit_idx;
+        for hashset in hashsets {
+            for (_, byte_idx, bit_idx) in hashset
+                .iter()
+                .map(|&val| self.node_to_bit_coords(val))
+                .filter(|&(i, _, _)| chunk_idx == i)
+            {
+                chunk_buffer[byte_idx] |= 1 << bit_idx;
+            }
         }
     }
 
@@ -772,7 +771,7 @@ impl<
 
                                 if first_iteration_on_disk {
                                     tracing::info!("[Thread {t}] creating depth {depth} chunk {chunk_idx}");
-                                    self.create_chunk(&mut chunk_buffer, &old, &current, chunk_idx, depth);
+                                    self.create_chunk(&mut chunk_buffer, &[&old, &current], chunk_idx, depth);
                                 } else{
                                     tracing::info!("[Thread {t}] reading depth {depth} chunk {chunk_idx}");
                                     self.read_chunk(&mut chunk_buffer, chunk_idx, depth);
