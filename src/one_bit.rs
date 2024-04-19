@@ -342,13 +342,7 @@ impl<
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
-    fn create_chunk(
-        &self,
-        chunk_buffer: &mut [u8],
-        hashsets: &[&HashSet<u64>],
-        chunk_idx: usize,
-        depth: usize,
-    ) {
+    fn create_chunk(&self, chunk_buffer: &mut [u8], hashsets: &[&HashSet<u64>], chunk_idx: usize) {
         chunk_buffer.fill(0);
 
         for hashset in hashsets {
@@ -771,7 +765,7 @@ impl<
 
                                 if first_iteration_on_disk {
                                     tracing::info!("[Thread {t}] creating depth {depth} chunk {chunk_idx}");
-                                    self.create_chunk(&mut chunk_buffer, &[&old, &current], chunk_idx, depth);
+                                    self.create_chunk(&mut chunk_buffer, &[&old, &current], chunk_idx);
                                 } else{
                                     tracing::info!("[Thread {t}] reading depth {depth} chunk {chunk_idx}");
                                     self.read_chunk(&mut chunk_buffer, chunk_idx, depth);
