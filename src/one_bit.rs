@@ -342,6 +342,29 @@ impl<
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
+    fn create_chunk(
+        &self,
+        chunk_buffer: &mut [u8],
+        old: &HashSet<u64>,
+        current: &HashSet<u64>,
+        chunk_idx: usize,
+        depth: usize,
+    ) {
+        chunk_buffer.fill(0);
+
+        // Update values from `old` and `current`
+        for (_, byte_idx, bit_idx) in old
+            .iter()
+            .chain(current.iter())
+            .map(|&val| self.node_to_bit_coords(val))
+            .filter(|&(i, _, _)| chunk_idx == i)
+        {
+            chunk_buffer[byte_idx] |= 1 << bit_idx;
+        }
+
+        self.write_chunk(&chunk_buffer, chunk_idx, depth);
+    }
+
     fn write_chunk(&self, chunk_buffer: &[u8], chunk_idx: usize, depth: usize) {
         let dir_path = self.chunk_dir_path(depth, chunk_idx);
 
@@ -720,22 +743,10 @@ impl<
         self.write_state(State::CreateChunks { depth });
 
         // Create chunks
-        let mut chunk_bytes = vec![0; self.chunk_size_bytes];
+        let mut chunk_buffer = vec![0; self.chunk_size_bytes];
 
         for chunk_idx in 0..self.num_array_chunks() {
-            chunk_bytes.fill(0);
-
-            // Update values from `old` and `current`
-            for (_, byte_idx, bit_idx) in old
-                .iter()
-                .chain(current.iter())
-                .map(|&val| self.node_to_bit_coords(val))
-                .filter(|&(i, _, _)| chunk_idx == i)
-            {
-                chunk_bytes[byte_idx] |= 1 << bit_idx;
-            }
-
-            self.write_chunk(&chunk_bytes, chunk_idx, depth);
+            self.create_chunk(&mut chunk_buffer, &old, &current, chunk_idx, depth);
         }
 
         drop(old);
