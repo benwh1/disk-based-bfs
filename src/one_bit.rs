@@ -151,7 +151,7 @@ pub enum InMemoryBfsResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum State {
-    CreateChunks { depth: usize },
+    FirstIterationOnDisk { depth: usize, group_idx: usize },
     UpdateAndExpand { depth: usize, group_idx: usize },
     CompressUpdateFiles { depth: usize, group_idx: usize },
     Cleanup { depth: usize },
@@ -746,7 +746,11 @@ impl<
             let mut new_positions = 0;
 
             for group_idx in (0..self.num_array_chunks()).step_by(self.threads) {
-                self.write_state(State::UpdateAndExpand { depth, group_idx });
+                if first_iteration_on_disk {
+                    self.write_state(State::FirstIterationOnDisk { depth, group_idx });
+                } else {
+                    self.write_state(State::UpdateAndExpand { depth, group_idx });
+                }
 
                 let old = &old;
                 let current = &current;
