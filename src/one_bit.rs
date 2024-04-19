@@ -249,13 +249,15 @@ impl<
             .join(format!("update-chunk-{chunk_idx}.dat"))
     }
 
-    fn new_positions_data_dir_path(&self, chunk_idx: usize) -> PathBuf {
-        self.root_dir(chunk_idx).join("new-positions")
+    fn new_positions_data_dir_path(&self, depth: usize) -> PathBuf {
+        self.root_dir(0)
+            .join("new-positions")
+            .join(format!("depth-{depth}"))
     }
 
     fn new_positions_data_file_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
-        self.new_positions_data_dir_path(chunk_idx)
-            .join(format!("depth-{depth}.dat"))
+        self.new_positions_data_dir_path(depth)
+            .join(format!("chunk-{chunk_idx}.dat"))
     }
 
     fn read_new_positions_data_file(&self, depth: usize, chunk_idx: usize) -> u64 {
@@ -267,7 +269,7 @@ impl<
     }
 
     fn write_new_positions_data_file(&self, depth: usize, chunk_idx: usize, new: u64) {
-        let dir_path = self.new_positions_data_dir_path(chunk_idx);
+        let dir_path = self.new_positions_data_dir_path(depth);
         std::fs::create_dir_all(&dir_path).unwrap();
 
         let file_path_tmp = self
