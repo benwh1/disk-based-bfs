@@ -868,8 +868,31 @@ impl<
         }
     }
 
+    fn first_disk_iteration(
+        &self,
+        chunk_buffers: &mut [Vec<u8>],
+        hashsets: &[&HashSet<u64>],
+        depth: usize,
+    ) -> u64 {
+        let mut new_positions = 0;
+
+        for group_idx in (0..self.num_array_chunks()).step_by(self.threads) {
+            self.write_state(State::FirstIterationOnDisk { depth, group_idx });
+            new_positions +=
+                self.create_and_process_chunk_group(chunk_buffers, hashsets, group_idx, depth);
+
+            self.write_state(State::CompressUpdateFiles { depth, group_idx });
+            self.check_for_update_files_compression(chunk_buffers, depth);
+        }
+
+        self.write_state(State::Cleanup { depth });
+        self.end_of_depth_cleanup(depth);
+
+        new_positions
+    }
+
     pub fn run(&self) {
-        let (mut old, mut current, next, mut depth) = match self.in_memory_bfs() {
+        let (old, current, next, mut depth) = match self.in_memory_bfs() {
             InMemoryBfsResult::Complete => return,
             InMemoryBfsResult::OutOfMemory {
                 old,
@@ -882,41 +905,33 @@ impl<
         tracing::info!("starting disk BFS");
 
         self.create_initial_update_files(&next, depth);
-
         drop(next);
 
-        let mut first_iteration_on_disk = true;
         let mut chunk_buffers = vec![vec![0u8; self.chunk_size_bytes]; self.threads];
+
+        let new_positions = self.first_disk_iteration(&mut chunk_buffers, &[&old, &current], depth);
+        tracing::info!("depth {} new {new_positions}", depth + 1);
+
+        if new_positions == 0 {
+            self.write_state(State::Done);
+            return;
+        }
+
+        drop(old);
+        drop(current);
+
+        depth += 1;
 
         loop {
             let mut new_positions = 0;
 
             for group_idx in (0..self.num_array_chunks()).step_by(self.threads) {
-                if first_iteration_on_disk {
-                    self.write_state(State::FirstIterationOnDisk { depth, group_idx });
-                    new_positions += self.create_and_process_chunk_group(
-                        &mut chunk_buffers,
-                        &[&old, &current],
-                        group_idx,
-                        depth,
-                    );
-                } else {
-                    self.write_state(State::UpdateAndExpand { depth, group_idx });
-                    new_positions +=
-                        self.read_and_process_chunk_group(&mut chunk_buffers, group_idx, depth);
-                }
+                self.write_state(State::UpdateAndExpand { depth, group_idx });
+                new_positions +=
+                    self.read_and_process_chunk_group(&mut chunk_buffers, group_idx, depth);
 
                 self.write_state(State::CompressUpdateFiles { depth, group_idx });
                 self.check_for_update_files_compression(&mut chunk_buffers, depth);
-            }
-
-            if first_iteration_on_disk {
-                first_iteration_on_disk = false;
-
-                old.clear();
-                old.shrink_to_fit();
-                current.clear();
-                current.shrink_to_fit();
             }
 
             tracing::info!("depth {} new {new_positions}", depth + 1);
