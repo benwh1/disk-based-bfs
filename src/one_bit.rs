@@ -155,6 +155,7 @@ pub enum State {
     UpdateAndExpand { depth: usize, group_idx: usize },
     CompressUpdateFiles { depth: usize, group_idx: usize },
     Cleanup { depth: usize },
+    Done,
 }
 
 pub struct Bfs<
@@ -873,5 +874,7 @@ impl<
 
             depth += 1;
         }
+
+        self.write_state(State::Done);
     }
 }
