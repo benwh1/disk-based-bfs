@@ -191,10 +191,14 @@ impl<
         &self.root_directories[chunk_idx % self.root_directories.len()]
     }
 
-    fn update_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+    fn update_depth_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.root_dir(chunk_idx)
             .join("update")
             .join(format!("depth-{depth}"))
+    }
+
+    fn update_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+        self.update_depth_dir_path(depth, chunk_idx)
             .join(format!("update-chunk-{chunk_idx}"))
     }
 
@@ -804,6 +808,26 @@ impl<
             }
 
             tracing::info!("depth {} new {new_positions}", depth + 1);
+
+            // We now have the array at depth `depth + 1`, and update files/arrays for depth
+            // `depth + 2`, so we can delete the directories (which should be empty) for the
+            // previous depth.
+            for root_idx in 0..self.root_directories.len() {
+                let dir_path = self.chunk_dir_path(depth, root_idx);
+                if dir_path.exists() {
+                    std::fs::remove_dir_all(dir_path).unwrap();
+                }
+
+                let dir_path = self.update_depth_dir_path(depth + 1, root_idx);
+                if dir_path.exists() {
+                    std::fs::remove_dir_all(dir_path).unwrap();
+                }
+
+                let dir_path = self.update_array_dir_path(depth + 1, root_idx);
+                if dir_path.exists() {
+                    std::fs::remove_dir_all(dir_path).unwrap();
+                }
+            }
 
             if new_positions == 0 {
                 break;
