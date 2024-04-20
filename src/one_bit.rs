@@ -8,12 +8,16 @@ use std::{
 
 use serde_derive::{Deserialize, Serialize};
 
+use crate::callback::BfsCallback;
+
 pub struct BfsBuilder<
     T: Default + Sync,
     Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
+    Callback: BfsCallback + Clone + Sync,
     const EXPANSION_NODES: usize,
 > {
     expander: Option<Expander>,
+    callback: Option<Callback>,
     threads: usize,
     chunk_size_bytes: Option<usize>,
     update_set_capacity: Option<usize>,
@@ -29,8 +33,9 @@ pub struct BfsBuilder<
 impl<
         T: Default + Sync,
         Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
+        Callback: BfsCallback + Clone + Sync,
         const EXPANSION_NODES: usize,
-    > Default for BfsBuilder<T, Expander, EXPANSION_NODES>
+    > Default for BfsBuilder<T, Expander, Callback, EXPANSION_NODES>
 {
     fn default() -> Self {
         Self::new()
@@ -40,12 +45,14 @@ impl<
 impl<
         T: Default + Sync,
         Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
+        Callback: BfsCallback + Clone + Sync,
         const EXPANSION_NODES: usize,
-    > BfsBuilder<T, Expander, EXPANSION_NODES>
+    > BfsBuilder<T, Expander, Callback, EXPANSION_NODES>
 {
     pub fn new() -> Self {
         Self {
             expander: None,
+            callback: None,
             threads: 1,
             chunk_size_bytes: None,
             update_set_capacity: None,
@@ -61,6 +68,11 @@ impl<
 
     pub fn expander(mut self, expander: Expander) -> Self {
         self.expander = Some(expander);
+        self
+    }
+
+    pub fn callback(mut self, callback: Callback) -> Self {
+        self.callback = Some(callback);
         self
     }
 
@@ -115,7 +127,7 @@ impl<
         self
     }
 
-    pub fn build(self) -> Option<Bfs<T, Expander, EXPANSION_NODES>> {
+    pub fn build(self) -> Option<Bfs<T, Expander, Callback, EXPANSION_NODES>> {
         // Require that all chunks are the same size
         let chunk_size_bytes = self.chunk_size_bytes?;
         let state_size = self.state_size? as usize;
@@ -125,6 +137,7 @@ impl<
 
         Some(Bfs {
             expander: self.expander?,
+            callback: self.callback?,
             threads: self.threads,
             chunk_size_bytes: self.chunk_size_bytes?,
             update_set_capacity: self.update_set_capacity?,
@@ -159,9 +172,11 @@ pub enum State {
 pub struct Bfs<
     T: Default + Sync,
     Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
+    Callback: BfsCallback + Clone + Sync,
     const EXPANSION_NODES: usize,
 > {
     expander: Expander,
+    callback: Callback,
     threads: usize,
     chunk_size_bytes: usize,
     update_set_capacity: usize,
@@ -177,8 +192,9 @@ pub struct Bfs<
 impl<
         T: Default + Sync,
         Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
+        Callback: BfsCallback + Clone + Sync,
         const EXPANSION_NODES: usize,
-    > Bfs<T, Expander, EXPANSION_NODES>
+    > Bfs<T, Expander, Callback, EXPANSION_NODES>
 {
     fn expand(&self, state: &mut T, encoded: u64, nodes: &mut [u64; EXPANSION_NODES]) {
         (self.expander)(state, encoded, nodes);
@@ -482,9 +498,12 @@ impl<
         let mut update_sets =
             vec![HashSet::<u32>::with_capacity(self.update_set_capacity); self.num_array_chunks()];
 
+        let mut callback = self.callback.clone();
+
         new_positions += self.update_and_expand_from_update_files(
             chunk_buffer,
             &mut update_sets,
+            &mut callback,
             chunk_idx,
             depth,
         );
@@ -492,9 +511,12 @@ impl<
         new_positions += self.update_and_expand_from_update_array(
             chunk_buffer,
             &mut update_sets,
+            &mut callback,
             chunk_idx,
             depth,
         );
+
+        callback.end_of_chunk(depth + 1, chunk_idx);
 
         // Write remaining update files
         for (idx, set) in update_sets.iter_mut().enumerate() {
@@ -527,6 +549,7 @@ impl<
         &self,
         chunk_buffer: &mut [u8],
         update_sets: &mut [HashSet<u32>],
+        callback: &mut Callback,
         chunk_idx: usize,
         depth: usize,
     ) -> u64 {
@@ -564,12 +587,14 @@ impl<
                         chunk_buffer[byte_idx] |= 1 << bit_idx;
                         new_positions += 1;
 
+                        let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
+                        callback.new_state(encoded);
+
                         if new_positions as usize % self.capacity_check_frequency == 0 {
                             self.check_update_set_capacity(update_sets, chunk_idx, depth + 2);
                         }
 
                         // Expand the node
-                        let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
                         self.expand(&mut state, encoded, &mut expanded);
 
                         for node in expanded {
@@ -592,6 +617,7 @@ impl<
         &self,
         chunk_buffer: &mut [u8],
         update_sets: &mut [HashSet<u32>],
+        callback: &mut Callback,
         chunk_idx: usize,
         depth: usize,
     ) -> u64 {
@@ -628,6 +654,9 @@ impl<
                     chunk_buffer[byte_idx] |= 1 << bit_idx;
                     new_positions += 1;
 
+                    let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
+                    callback.new_state(encoded);
+
                     if new_positions as usize % self.capacity_check_frequency == 0 {
                         self.check_update_set_capacity(update_sets, chunk_idx, depth + 2);
                     }
@@ -662,9 +691,15 @@ impl<
         let mut expanded = [0u64; EXPANSION_NODES];
         let mut depth = 0;
 
+        let mut callback = self.callback.clone();
+
         for &state in &self.initial_states {
-            current.insert(state);
+            if current.insert(state) {
+                callback.new_state(state);
+            }
         }
+
+        callback.end_of_chunk(0, 0);
 
         let mut new;
         let mut total = 1;
@@ -672,6 +707,8 @@ impl<
         tracing::info!("starting in-memory BFS");
 
         loop {
+            let mut callback = self.callback.clone();
+
             new = 0;
 
             for &encoded in &current {
@@ -679,9 +716,12 @@ impl<
                 for node in expanded {
                     if !old.contains(&node) && !current.contains(&node) && next.insert(node) {
                         new += 1;
+                        callback.new_state(node);
                     }
                 }
             }
+            callback.end_of_chunk(depth + 1, 0);
+
             depth += 1;
             total += new;
 
