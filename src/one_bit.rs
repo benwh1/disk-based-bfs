@@ -2,7 +2,6 @@ use std::{
     collections::HashSet,
     fs::File,
     io::{BufReader, BufWriter, Read, Write},
-    marker::PhantomData,
     path::{Path, PathBuf},
 };
 
@@ -11,8 +10,7 @@ use serde_derive::{Deserialize, Serialize};
 use crate::callback::BfsCallback;
 
 pub struct BfsBuilder<
-    T: Default + Sync,
-    Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
+    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
     Callback: BfsCallback + Clone + Sync,
     const EXPANSION_NODES: usize,
 > {
@@ -27,15 +25,13 @@ pub struct BfsBuilder<
     root_directories: Option<Vec<PathBuf>>,
     initial_memory_limit: Option<usize>,
     update_files_compression_threshold: Option<u64>,
-    phantom_t: PhantomData<T>,
 }
 
 impl<
-        T: Default + Sync,
-        Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
+        Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
         Callback: BfsCallback + Clone + Sync,
         const EXPANSION_NODES: usize,
-    > Default for BfsBuilder<T, Expander, Callback, EXPANSION_NODES>
+    > Default for BfsBuilder<Expander, Callback, EXPANSION_NODES>
 {
     fn default() -> Self {
         Self::new()
@@ -43,11 +39,10 @@ impl<
 }
 
 impl<
-        T: Default + Sync,
-        Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
+        Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
         Callback: BfsCallback + Clone + Sync,
         const EXPANSION_NODES: usize,
-    > BfsBuilder<T, Expander, Callback, EXPANSION_NODES>
+    > BfsBuilder<Expander, Callback, EXPANSION_NODES>
 {
     pub fn new() -> Self {
         Self {
@@ -62,7 +57,6 @@ impl<
             root_directories: None,
             initial_memory_limit: None,
             update_files_compression_threshold: None,
-            phantom_t: PhantomData,
         }
     }
 
@@ -127,7 +121,7 @@ impl<
         self
     }
 
-    pub fn build(self) -> Option<Bfs<T, Expander, Callback, EXPANSION_NODES>> {
+    pub fn build(self) -> Option<Bfs<Expander, Callback, EXPANSION_NODES>> {
         // Require that all chunks are the same size
         let chunk_size_bytes = self.chunk_size_bytes?;
         let state_size = self.state_size? as usize;
@@ -147,7 +141,6 @@ impl<
             root_directories: self.root_directories?,
             initial_memory_limit: self.initial_memory_limit?,
             update_files_compression_threshold: self.update_files_compression_threshold?,
-            phantom_t: PhantomData,
         })
     }
 }
@@ -170,8 +163,7 @@ pub enum State {
 }
 
 pub struct Bfs<
-    T: Default + Sync,
-    Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
+    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
     Callback: BfsCallback + Clone + Sync,
     const EXPANSION_NODES: usize,
 > {
@@ -186,20 +178,14 @@ pub struct Bfs<
     root_directories: Vec<PathBuf>,
     initial_memory_limit: usize,
     update_files_compression_threshold: u64,
-    phantom_t: PhantomData<T>,
 }
 
 impl<
-        T: Default + Sync,
-        Expander: Fn(&mut T, u64, &mut [u64; EXPANSION_NODES]) + Sync,
+        Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
         Callback: BfsCallback + Clone + Sync,
         const EXPANSION_NODES: usize,
-    > Bfs<T, Expander, Callback, EXPANSION_NODES>
+    > Bfs<Expander, Callback, EXPANSION_NODES>
 {
-    fn expand(&self, state: &mut T, encoded: u64, nodes: &mut [u64; EXPANSION_NODES]) {
-        (self.expander)(state, encoded, nodes);
-    }
-
     fn array_bytes(&self) -> usize {
         self.state_size.div_ceil(8) as usize
     }
@@ -576,7 +562,7 @@ impl<
     ) -> u64 {
         let mut new_positions = 0u64;
 
-        let mut state = T::default();
+        let mut expander = self.expander.clone();
         let mut expanded = [0u64; EXPANSION_NODES];
 
         for i in 0..self.num_array_chunks() {
@@ -616,7 +602,7 @@ impl<
                         }
 
                         // Expand the node
-                        self.expand(&mut state, encoded, &mut expanded);
+                        expander(encoded, &mut expanded);
 
                         for node in expanded {
                             let (idx, offset) = self.node_to_chunk_coords(node);
@@ -644,7 +630,7 @@ impl<
     ) -> u64 {
         let mut new_positions = 0u64;
 
-        let mut state = T::default();
+        let mut expander = self.expander.clone();
         let mut expanded = [0u64; EXPANSION_NODES];
 
         let file_path = self.update_array_file_path(depth + 1, chunk_idx);
@@ -684,7 +670,7 @@ impl<
 
                     // Expand the node
                     let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
-                    self.expand(&mut state, encoded, &mut expanded);
+                    expander(encoded, &mut expanded);
 
                     for node in expanded {
                         let (idx, offset) = self.node_to_chunk_coords(node);
@@ -708,7 +694,7 @@ impl<
         let mut current = HashSet::<u64>::new();
         let mut next = HashSet::<u64>::new();
 
-        let mut state = T::default();
+        let mut expander = self.expander.clone();
         let mut expanded = [0u64; EXPANSION_NODES];
         let mut depth = 0;
 
@@ -733,7 +719,7 @@ impl<
             new = 0;
 
             for &encoded in &current {
-                self.expand(&mut state, encoded, &mut expanded);
+                expander(encoded, &mut expanded);
                 for node in expanded {
                     if !old.contains(&node) && !current.contains(&node) && next.insert(node) {
                         new += 1;
