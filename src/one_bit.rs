@@ -855,6 +855,10 @@ impl<
                             (0..self.num_array_chunks()).skip(t).step_by(self.threads)
                         {
                             let path = self.update_chunk_dir_path(depth + 2, chunk_idx);
+                            if !path.exists() {
+                                continue;
+                            }
+
                             let used_space = fs_extra::dir::get_size(&path).unwrap();
 
                             if used_space > self.update_files_compression_threshold {
