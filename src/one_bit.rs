@@ -151,9 +151,7 @@ pub enum InMemoryBfsResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum State {
-    FirstIterationOnDisk { depth: usize, group_idx: usize },
-    UpdateAndExpand { depth: usize, group_idx: usize },
-    CompressUpdateFiles { depth: usize, group_idx: usize },
+    Iteration { depth: usize },
     Cleanup { depth: usize },
     Done,
 }
@@ -919,11 +917,8 @@ impl<
         let mut new_positions = 0;
 
         for group_idx in (0..self.num_array_chunks()).step_by(self.threads) {
-            self.write_state(State::FirstIterationOnDisk { depth, group_idx });
             new_positions +=
                 self.create_and_process_chunk_group(chunk_buffers, hashsets, group_idx, depth);
-
-            self.write_state(State::CompressUpdateFiles { depth, group_idx });
             self.check_for_update_files_compression(chunk_buffers, depth);
         }
 
@@ -939,10 +934,9 @@ impl<
         let mut new = 0;
 
         for group_idx in (0..self.num_array_chunks()).step_by(self.threads) {
-            self.write_state(State::UpdateAndExpand { depth, group_idx });
-            new += self.read_and_process_chunk_group(chunk_buffers, group_idx, depth);
+            self.write_state(State::Iteration { depth });
 
-            self.write_state(State::CompressUpdateFiles { depth, group_idx });
+            new += self.read_and_process_chunk_group(chunk_buffers, group_idx, depth);
             self.check_for_update_files_compression(chunk_buffers, depth);
         }
 
