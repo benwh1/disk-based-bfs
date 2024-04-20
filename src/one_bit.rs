@@ -451,6 +451,27 @@ impl<
         }
     }
 
+    fn exhausted_chunk_dir_path(&self) -> PathBuf {
+        self.root_dir(0).join("exhausted-chunks")
+    }
+
+    fn exhausted_chunk_file_path(&self, chunk_idx: usize) -> PathBuf {
+        self.exhausted_chunk_dir_path()
+            .join(format!("chunk-{chunk_idx}.dat"))
+    }
+
+    fn mark_chunk_exhausted(&self, chunk_idx: usize) {
+        let dir_path = self.exhausted_chunk_dir_path();
+        std::fs::create_dir_all(&dir_path).unwrap();
+
+        let file_path = self.exhausted_chunk_file_path(chunk_idx);
+        File::create(file_path).unwrap();
+    }
+
+    fn is_chunk_exhausted(&self, chunk_idx: usize) -> bool {
+        self.exhausted_chunk_file_path(chunk_idx).exists()
+    }
+
     fn compress_update_files(&self, update_buffer: &mut [u8], chunk_idx: usize, depth: usize) {
         // If there is already an update array file, read it into the buffer first so we don't
         // overwrite the old array. Otherwise, just fill with zeros.
@@ -824,6 +845,12 @@ impl<
                             return None;
                         }
 
+                        if self.is_chunk_exhausted(chunk_idx) {
+                            tracing::info!("[Thread {t}] chunk {chunk_idx} is exhausted");
+                            tracing::info!("[Thread {t}] depth {} chunk {chunk_idx} new 0", depth + 1);
+                            return Some((chunk_buffer, 0));
+                        }
+
                         if let Some(hashsets) = create_chunk_hashsets {
                             tracing::info!("[Thread {t}] creating depth {depth} chunk {chunk_idx}");
                             self.create_chunk(&mut chunk_buffer, hashsets, chunk_idx);
@@ -852,6 +879,12 @@ impl<
 
                         tracing::info!("[Thread {t}] writing depth {} chunk {chunk_idx}", depth + 1);
                         self.write_chunk(&mut chunk_buffer, chunk_idx, depth + 1);
+
+                        // Check if the chunk is exhausted
+                        if chunk_buffer.iter().all(|&byte| byte == 0xFF) {
+                            tracing::info!("[Thread {t}] marking chunk {chunk_idx} as exhausted");
+                            self.mark_chunk_exhausted(chunk_idx);
+                        }
 
                         tracing::info!("[Thread {t}] deleting depth {depth} chunk {chunk_idx}");
                         self.delete_chunk_file(depth, chunk_idx);
