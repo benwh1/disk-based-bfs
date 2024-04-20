@@ -281,10 +281,10 @@ impl<
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
-    fn delete_new_positions_data_file(&self, depth: usize, chunk_idx: usize) {
-        let file_path = self.new_positions_data_file_path(depth, chunk_idx);
+    fn delete_new_positions_data_dir(&self, depth: usize) {
+        let file_path = self.new_positions_data_dir_path(depth);
         if file_path.exists() {
-            std::fs::remove_file(file_path).unwrap();
+            std::fs::remove_dir_all(file_path).unwrap();
         }
     }
 
@@ -926,6 +926,8 @@ impl<
                 std::fs::remove_dir_all(dir_path).unwrap();
             }
         }
+
+        self.delete_new_positions_data_dir(depth + 1);
     }
 
     fn first_disk_iteration(
