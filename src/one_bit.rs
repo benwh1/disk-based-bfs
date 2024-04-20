@@ -288,10 +288,10 @@ impl<
         }
     }
 
-    fn read_state(&self) -> State {
+    fn read_state(&self) -> Option<State> {
         let file_path = self.state_file_path();
-        let str = std::fs::read_to_string(file_path).unwrap();
-        serde_json::from_str(&str).unwrap()
+        let str = std::fs::read_to_string(file_path).ok()?;
+        serde_json::from_str(&str).ok()
     }
 
     fn write_state(&self, state: State) {
@@ -302,9 +302,11 @@ impl<
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
-    fn read_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) {
+    fn try_read_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) -> bool {
         let file_path = self.chunk_file_path(depth, chunk_idx);
-        let mut file = File::open(file_path).unwrap();
+        let Ok(mut file) = File::open(file_path) else {
+            return false;
+        };
 
         // Check that the file size is correct
         let expected_size = self.chunk_size_bytes;
@@ -312,6 +314,8 @@ impl<
         assert_eq!(expected_size, actual_size as usize);
 
         file.read_exact(chunk_buffer).unwrap();
+
+        true
     }
 
     fn try_read_update_array(
@@ -783,14 +787,26 @@ impl<
                         if let Some(hashsets) = create_chunk_hashsets {
                             tracing::info!("[Thread {t}] creating depth {depth} chunk {chunk_idx}");
                             self.create_chunk(&mut chunk_buffer, hashsets, chunk_idx);
-                        } else{
+                        } else {
                             tracing::info!("[Thread {t}] reading depth {depth} chunk {chunk_idx}");
-                            self.read_chunk(&mut chunk_buffer, chunk_idx, depth);
+                            if !self.try_read_chunk(&mut chunk_buffer, chunk_idx, depth) {
+                                // No chunk file, so check that it has already been expanded
+                                let next_chunk_file = self.chunk_file_path(depth + 1, chunk_idx);
+                                assert!(
+                                    next_chunk_file.exists(),
+                                    "no chunk {chunk_idx} found at depth {depth} or {}",
+                                    depth + 1,
+                                );
+
+                                // Read the number of new positions from that chunk and return it
+                                let new = self.read_new_positions_data_file(depth + 1, chunk_idx);
+                                return Some((chunk_buffer, new));
+                            }
                         }
 
                         tracing::info!("[Thread {t}] updating and expanding depth {depth} -> {} chunk {chunk_idx}", depth + 1);
                         let new = self.update_and_expand_chunk(&mut chunk_buffer, chunk_idx, depth);
-                        self.write_new_positions_data_file(depth, chunk_idx, new);
+                        self.write_new_positions_data_file(depth + 1, chunk_idx, new);
 
                         tracing::info!("[Thread {t}] depth {} chunk {chunk_idx} new {new}", depth + 1);
 
@@ -952,7 +968,7 @@ impl<
         new
     }
 
-    pub fn run(&self) {
+    fn run_from_start(&self) {
         let (old, current, next, mut depth) = match self.in_memory_bfs() {
             InMemoryBfsResult::Complete => return,
             InMemoryBfsResult::OutOfMemory {
@@ -984,6 +1000,45 @@ impl<
 
         while self.do_iteration(&mut chunk_buffers, depth) != 0 {
             depth += 1;
+        }
+
+        self.write_state(State::Done);
+    }
+
+    pub fn run(&self) {
+        match self.read_state() {
+            Some(s) => match s {
+                State::Iteration { mut depth } => {
+                    let mut chunk_buffers = vec![vec![0u8; self.chunk_size_bytes]; self.threads];
+
+                    if self.do_iteration(&mut chunk_buffers, depth) == 0 {
+                        self.write_state(State::Done);
+                        return;
+                    }
+
+                    depth += 1;
+
+                    while self.do_iteration(&mut chunk_buffers, depth) != 0 {
+                        depth += 1;
+                    }
+
+                    self.write_state(State::Done);
+                }
+                State::Cleanup { mut depth } => {
+                    self.end_of_depth_cleanup(depth);
+                    depth += 1;
+
+                    let mut chunk_buffers = vec![vec![0u8; self.chunk_size_bytes]; self.threads];
+
+                    while self.do_iteration(&mut chunk_buffers, depth) != 0 {
+                        depth += 1;
+                    }
+
+                    self.write_state(State::Done);
+                }
+                State::Done => return,
+            },
+            None => self.run_from_start(),
         }
 
         self.write_state(State::Done);
