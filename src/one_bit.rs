@@ -609,7 +609,7 @@ impl<
                         new_positions += 1;
 
                         let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
-                        callback.new_state(encoded);
+                        callback.new_state(depth + 1, encoded);
 
                         if new_positions as usize % self.capacity_check_frequency == 0 {
                             self.check_update_set_capacity(update_sets, chunk_idx, depth + 2);
@@ -676,7 +676,7 @@ impl<
                     new_positions += 1;
 
                     let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
-                    callback.new_state(encoded);
+                    callback.new_state(depth + 1, encoded);
 
                     if new_positions as usize % self.capacity_check_frequency == 0 {
                         self.check_update_set_capacity(update_sets, chunk_idx, depth + 2);
@@ -716,7 +716,7 @@ impl<
 
         for &state in &self.initial_states {
             if current.insert(state) {
-                callback.new_state(state);
+                callback.new_state(depth + 1, state);
             }
         }
 
@@ -737,7 +737,7 @@ impl<
                 for node in expanded {
                     if !old.contains(&node) && !current.contains(&node) && next.insert(node) {
                         new += 1;
-                        callback.new_state(node);
+                        callback.new_state(depth + 1, node);
                     }
                 }
             }
