@@ -282,7 +282,7 @@ impl<
         u64::from_le_bytes(buf)
     }
 
-    fn write_new_positions_data_file(&self, depth: usize, chunk_idx: usize, new: u64) {
+    fn write_new_positions_data_file(&self, new: u64, depth: usize, chunk_idx: usize) {
         let dir_path = self.new_positions_data_dir_path(depth);
         std::fs::create_dir_all(&dir_path).unwrap();
 
@@ -318,7 +318,7 @@ impl<
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
-    fn try_read_chunk(&self, chunk_buffer: &mut [u8], chunk_idx: usize, depth: usize) -> bool {
+    fn try_read_chunk(&self, chunk_buffer: &mut [u8], depth: usize, chunk_idx: usize) -> bool {
         let file_path = self.chunk_file_path(depth, chunk_idx);
         let Ok(mut file) = File::open(file_path) else {
             return false;
@@ -359,10 +359,10 @@ impl<
 
     fn write_update_file(
         &self,
+        update_set: &mut HashSet<u32>,
         depth: usize,
         updated_chunk_idx: usize,
         from_chunk_idx: usize,
-        update_set: &mut HashSet<u32>,
     ) {
         let dir_path =
             self.update_chunk_from_chunk_dir_path(depth, updated_chunk_idx, from_chunk_idx);
@@ -386,7 +386,7 @@ impl<
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
-    fn write_update_array(&self, update_buffer: &[u8], chunk_idx: usize, depth: usize) {
+    fn write_update_array(&self, update_buffer: &[u8], depth: usize, chunk_idx: usize) {
         let dir_path = self.update_array_dir_path(depth, chunk_idx);
 
         std::fs::create_dir_all(&dir_path).unwrap();
@@ -415,7 +415,7 @@ impl<
         }
     }
 
-    fn write_chunk(&self, chunk_buffer: &[u8], chunk_idx: usize, depth: usize) {
+    fn write_chunk(&self, chunk_buffer: &[u8], depth: usize, chunk_idx: usize) {
         let dir_path = self.chunk_dir_path(depth, chunk_idx);
 
         std::fs::create_dir_all(&dir_path).unwrap();
@@ -472,7 +472,7 @@ impl<
         self.exhausted_chunk_file_path(chunk_idx).exists()
     }
 
-    fn compress_update_files(&self, update_buffer: &mut [u8], chunk_idx: usize, depth: usize) {
+    fn compress_update_files(&self, update_buffer: &mut [u8], depth: usize, chunk_idx: usize) {
         // If there is already an update array file, read it into the buffer first so we don't
         // overwrite the old array. Otherwise, just fill with zeros.
         if !self.try_read_update_array(update_buffer, depth, chunk_idx) {
@@ -504,15 +504,15 @@ impl<
             }
         }
 
-        self.write_update_array(update_buffer, chunk_idx, depth);
+        self.write_update_array(update_buffer, depth, chunk_idx);
         self.delete_update_files(depth, chunk_idx);
     }
 
     fn update_and_expand_chunk(
         &self,
         chunk_buffer: &mut [u8],
-        chunk_idx: usize,
         depth: usize,
+        chunk_idx: usize,
     ) -> u64 {
         let mut new_positions = 0;
 
@@ -525,23 +525,23 @@ impl<
             chunk_buffer,
             &mut update_sets,
             &mut callback,
-            chunk_idx,
             depth,
+            chunk_idx,
         );
 
         new_positions += self.update_and_expand_from_update_array(
             chunk_buffer,
             &mut update_sets,
             &mut callback,
-            chunk_idx,
             depth,
+            chunk_idx,
         );
 
         callback.end_of_chunk(depth + 1, chunk_idx);
 
         // Write remaining update files
         for (idx, set) in update_sets.iter_mut().enumerate() {
-            self.write_update_file(depth + 2, idx, chunk_idx, set);
+            self.write_update_file(set, depth + 2, idx, chunk_idx);
         }
 
         new_positions
@@ -550,8 +550,8 @@ impl<
     fn check_update_set_capacity(
         &self,
         update_sets: &mut [HashSet<u32>],
-        chunk_idx: usize,
         depth: usize,
+        chunk_idx: usize,
     ) {
         // Check if any of the update sets may go over capacity
         let max_new_nodes = self.capacity_check_frequency * EXPANSION_NODES;
@@ -560,7 +560,7 @@ impl<
             if set.len() + max_new_nodes > set.capacity() {
                 // Possible to reach capacity on the next block of expansions, so
                 // write update file to disk
-                self.write_update_file(depth, idx, chunk_idx, set);
+                self.write_update_file(set, depth, idx, chunk_idx);
                 set.clear();
             }
         }
@@ -571,8 +571,8 @@ impl<
         chunk_buffer: &mut [u8],
         update_sets: &mut [HashSet<u32>],
         callback: &mut Callback,
-        chunk_idx: usize,
         depth: usize,
+        chunk_idx: usize,
     ) -> u64 {
         let mut new_positions = 0u64;
 
@@ -612,7 +612,7 @@ impl<
                         callback.new_state(depth + 1, encoded);
 
                         if new_positions as usize % self.capacity_check_frequency == 0 {
-                            self.check_update_set_capacity(update_sets, chunk_idx, depth + 2);
+                            self.check_update_set_capacity(update_sets, depth + 2, chunk_idx);
                         }
 
                         // Expand the node
@@ -639,8 +639,8 @@ impl<
         chunk_buffer: &mut [u8],
         update_sets: &mut [HashSet<u32>],
         callback: &mut Callback,
-        chunk_idx: usize,
         depth: usize,
+        chunk_idx: usize,
     ) -> u64 {
         let mut new_positions = 0u64;
 
@@ -679,7 +679,7 @@ impl<
                     callback.new_state(depth + 1, encoded);
 
                     if new_positions as usize % self.capacity_check_frequency == 0 {
-                        self.check_update_set_capacity(update_sets, chunk_idx, depth + 2);
+                        self.check_update_set_capacity(update_sets, depth + 2, chunk_idx);
                     }
 
                     // Expand the node
@@ -825,8 +825,8 @@ impl<
         &self,
         chunk_buffers: &mut [Vec<u8>],
         create_chunk_hashsets: Option<&[&HashSet<u64>]>,
-        group_idx: usize,
         depth: usize,
+        group_idx: usize,
     ) -> u64 {
         let mut new_positions = 0;
 
@@ -856,7 +856,7 @@ impl<
                             self.create_chunk(&mut chunk_buffer, hashsets, chunk_idx);
                         } else {
                             tracing::info!("[Thread {t}] reading depth {depth} chunk {chunk_idx}");
-                            if !self.try_read_chunk(&mut chunk_buffer, chunk_idx, depth) {
+                            if !self.try_read_chunk(&mut chunk_buffer, depth, chunk_idx) {
                                 // No chunk file, so check that it has already been expanded
                                 let next_chunk_file = self.chunk_file_path(depth + 1, chunk_idx);
                                 assert!(
@@ -872,13 +872,13 @@ impl<
                         }
 
                         tracing::info!("[Thread {t}] updating and expanding depth {depth} -> {} chunk {chunk_idx}", depth + 1);
-                        let new = self.update_and_expand_chunk(&mut chunk_buffer, chunk_idx, depth);
-                        self.write_new_positions_data_file(depth + 1, chunk_idx, new);
+                        let new = self.update_and_expand_chunk(&mut chunk_buffer, depth, chunk_idx);
+                        self.write_new_positions_data_file(new, depth + 1, chunk_idx);
 
                         tracing::info!("[Thread {t}] depth {} chunk {chunk_idx} new {new}", depth + 1);
 
                         tracing::info!("[Thread {t}] writing depth {} chunk {chunk_idx}", depth + 1);
-                        self.write_chunk(&mut chunk_buffer, chunk_idx, depth + 1);
+                        self.write_chunk(&mut chunk_buffer, depth + 1, chunk_idx);
 
                         // Check if the chunk is exhausted
                         if chunk_buffer.iter().all(|&byte| byte == 0xFF) {
@@ -918,19 +918,19 @@ impl<
         &self,
         chunk_buffers: &mut [Vec<u8>],
         hashsets: &[&HashSet<u64>],
-        group_idx: usize,
         depth: usize,
+        group_idx: usize,
     ) -> u64 {
-        self.process_chunk_group(chunk_buffers, Some(hashsets), group_idx, depth)
+        self.process_chunk_group(chunk_buffers, Some(hashsets), depth, group_idx)
     }
 
     fn read_and_process_chunk_group(
         &self,
         chunk_buffers: &mut [Vec<u8>],
-        group_idx: usize,
         depth: usize,
+        group_idx: usize,
     ) -> u64 {
-        self.process_chunk_group(chunk_buffers, None, group_idx, depth)
+        self.process_chunk_group(chunk_buffers, None, depth, group_idx)
     }
 
     fn check_for_update_files_compression(&self, update_buffers: &mut [Vec<u8>], depth: usize) {
@@ -958,8 +958,8 @@ impl<
                                 );
                                 self.compress_update_files(
                                     &mut update_buffer,
-                                    chunk_idx,
                                     depth + 2,
+                                    chunk_idx,
                                 );
                             }
                         }
@@ -1013,7 +1013,7 @@ impl<
 
         for group_idx in (0..self.num_array_chunks()).step_by(self.threads) {
             new_positions +=
-                self.create_and_process_chunk_group(chunk_buffers, hashsets, group_idx, depth);
+                self.create_and_process_chunk_group(chunk_buffers, hashsets, depth, group_idx);
             self.check_for_update_files_compression(chunk_buffers, depth);
         }
 
@@ -1031,7 +1031,7 @@ impl<
         for group_idx in (0..self.num_array_chunks()).step_by(self.threads) {
             self.write_state(State::Iteration { depth });
 
-            new += self.read_and_process_chunk_group(chunk_buffers, group_idx, depth);
+            new += self.read_and_process_chunk_group(chunk_buffers, depth, group_idx);
             self.check_for_update_files_compression(chunk_buffers, depth);
         }
 
