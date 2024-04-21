@@ -1,10 +1,10 @@
 use std::{
-    collections::HashSet,
     fs::File,
     io::{BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
 };
 
+use cityhasher::{CityHasher, HashSet};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::callback::BfsCallback;
@@ -148,8 +148,8 @@ impl<
 pub enum InMemoryBfsResult {
     Complete,
     OutOfMemory {
-        old: HashSet<u64>,
-        current: HashSet<u64>,
+        old: HashSet<u64, CityHasher>,
+        current: HashSet<u64, CityHasher>,
         next: HashSet<u64>,
         depth: usize,
     },
@@ -502,8 +502,13 @@ impl<
     ) -> u64 {
         let mut new_positions = 0;
 
-        let mut update_sets =
-            vec![HashSet::<u32>::with_capacity(self.update_set_capacity); self.num_array_chunks()];
+        let mut update_sets = vec![
+            HashSet::<u32, CityHasher>::with_capacity_and_hasher(
+                self.update_set_capacity,
+                CityHasher::default()
+            );
+            self.num_array_chunks()
+        ];
 
         let mut callback = self.callback.clone();
 
@@ -690,9 +695,9 @@ impl<
     fn in_memory_bfs(&self) -> InMemoryBfsResult {
         let max_capacity = self.initial_memory_limit / 8;
 
-        let mut old = HashSet::<u64>::with_capacity(max_capacity / 2);
-        let mut current = HashSet::<u64>::new();
-        let mut next = HashSet::<u64>::new();
+        let mut old = HashSet::with_capacity_and_hasher(max_capacity / 2, CityHasher::default());
+        let mut current = HashSet::with_hasher(CityHasher::default());
+        let mut next = HashSet::with_hasher(CityHasher::default());
 
         let mut expander = self.expander.clone();
         let mut expanded = [0u64; EXPANSION_NODES];

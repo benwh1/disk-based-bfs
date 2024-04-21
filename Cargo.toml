@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+cityhasher = "0.1.0"
 fs4 = "0.8.2"
 fs_extra = "1.3.0"
 serde = "1.0.198"
