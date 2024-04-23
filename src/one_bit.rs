@@ -430,6 +430,24 @@ impl<
         }
     }
 
+    fn delete_used_update_files(&self, depth: usize, chunk_idx: usize) {
+        for from_chunk_idx in 0..self.num_array_chunks() {
+            let dir_path = self.update_chunk_from_chunk_dir_path(depth, chunk_idx, from_chunk_idx);
+
+            let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
+                continue;
+            };
+
+            for file_path in read_dir
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("used"))
+            {
+                std::fs::remove_file(file_path).unwrap();
+            }
+        }
+    }
+
     fn delete_update_array(&self, depth: usize, chunk_idx: usize) {
         let file_path = self.update_array_file_path(depth, chunk_idx);
         if file_path.exists() {
@@ -472,8 +490,13 @@ impl<
                 continue;
             };
 
-            for file_path in read_dir.flatten().map(|entry| entry.path()) {
-                let file = File::open(file_path).unwrap();
+            for file_path in read_dir.flatten().map(|entry| entry.path()).filter(|path| {
+                let ext = path.extension().and_then(|ext| ext.to_str());
+                // Look for "used" as well, in case we restart the program while this loop is
+                // running and need to re-read all the update files
+                ext == Some("dat") || ext == Some("used")
+            }) {
+                let file = File::open(&file_path).unwrap();
                 let mut reader = BufReader::new(file);
 
                 let mut buf = [0u8; 4];
@@ -487,11 +510,17 @@ impl<
                     let (byte_idx, bit_idx) = self.chunk_offset_to_bit_coords(chunk_offset);
                     update_buffer[byte_idx] |= 1 << bit_idx;
                 }
+
+                drop(reader);
+
+                // Rename the file to mark it as used
+                let file_path_used = file_path.with_extension("used");
+                std::fs::rename(file_path, file_path_used).unwrap();
             }
         }
 
         self.write_update_array(update_buffer, depth, chunk_idx);
-        self.delete_update_files(depth, chunk_idx);
+        self.delete_used_update_files(depth, chunk_idx);
     }
 
     fn update_and_expand_chunk(
