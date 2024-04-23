@@ -163,6 +163,36 @@ pub enum State {
     Done,
 }
 
+#[derive(Clone)]
+struct ChunkBufferList {
+    buffers: Arc<Mutex<Vec<Option<Vec<u8>>>>>,
+}
+
+impl ChunkBufferList {
+    fn new(num_buffers: usize, buffer_size: usize) -> Self {
+        let buffers = (0..num_buffers)
+            .map(|_| Some(vec![0; buffer_size]))
+            .collect();
+        let buffers = Arc::new(Mutex::new(buffers));
+        Self { buffers }
+    }
+
+    fn take(&self) -> Option<Vec<u8>> {
+        let mut lock = self.buffers.lock().unwrap();
+        lock.iter_mut().find_map(|buf| buf.take())
+    }
+
+    fn put(&self, buffer: Vec<u8>) {
+        let mut lock = self.buffers.lock().unwrap();
+        for buf in lock.iter_mut() {
+            if buf.is_none() {
+                buf.replace(buffer);
+                return;
+            }
+        }
+    }
+}
+
 pub struct Bfs<
     Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
     Callback: BfsCallback + Clone + Sync,
@@ -943,7 +973,7 @@ impl<
 
     fn do_iteration(
         &self,
-        chunk_buffers: Arc<Mutex<Vec<Option<Vec<u8>>>>>,
+        chunk_buffers: ChunkBufferList,
         create_chunk_hashsets: Option<&[&HashSet<u64>]>,
         depth: usize,
     ) -> u64 {
@@ -1031,16 +1061,7 @@ impl<
                             cvar.notify_one();
 
                             // Get a chunk buffer
-                            let mut chunk_buffer = None;
-                            let mut chunk_buffers_lock = chunk_buffers.lock().unwrap();
-                            for buf in chunk_buffers_lock.iter_mut() {
-                                if let Some(buf) = buf.take() {
-                                    chunk_buffer = Some(buf);
-                                    break;
-                                }
-                            }
-                            drop(chunk_buffers_lock);
-                            let mut chunk_buffer = chunk_buffer.unwrap();
+                            let mut chunk_buffer = chunk_buffers.take().unwrap();
 
                             // Compress the update files
                             tracing::info!(
@@ -1056,14 +1077,7 @@ impl<
                             drop(update_file_states_lock);
 
                             // Put the chunk buffer back
-                            let mut chunk_buffers_lock = chunk_buffers.lock().unwrap();
-                            for buf in chunk_buffers_lock.iter_mut() {
-                                if buf.is_none() {
-                                    buf.replace(chunk_buffer);
-                                    break;
-                                }
-                            }
-                            drop(chunk_buffers_lock);
+                            chunk_buffers.put(chunk_buffer);
 
                             *lock.lock().unwrap() = true;
                             cvar.notify_one();
@@ -1087,16 +1101,7 @@ impl<
                             cvar.notify_one();
 
                             // Get a chunk buffer
-                            let mut chunk_buffer = None;
-                            let mut chunk_buffers_lock = chunk_buffers.lock().unwrap();
-                            for buf in chunk_buffers_lock.iter_mut() {
-                                if let Some(buf) = buf.take() {
-                                    chunk_buffer = Some(buf);
-                                    break;
-                                }
-                            }
-                            drop(chunk_buffers_lock);
-                            let mut chunk_buffer = chunk_buffer.unwrap();
+                            let mut chunk_buffer = chunk_buffers.take().unwrap();
 
                             // Process the chunk
                             let chunk_new = self.process_chunk(
@@ -1114,14 +1119,7 @@ impl<
                             drop(chunk_states_lock);
 
                             // Put the chunk buffer back
-                            let mut chunk_buffers_lock = chunk_buffers.lock().unwrap();
-                            for buf in chunk_buffers_lock.iter_mut() {
-                                if buf.is_none() {
-                                    buf.replace(chunk_buffer);
-                                    break;
-                                }
-                            }
-                            drop(chunk_buffers_lock);
+                            chunk_buffers.put(chunk_buffer);
 
                             *lock.lock().unwrap() = true;
                             cvar.notify_one();
@@ -1165,10 +1163,7 @@ impl<
         self.create_initial_update_files(&next, depth);
         drop(next);
 
-        let chunk_buffers = Arc::new(Mutex::new(vec![
-            Some(vec![0u8; self.chunk_size_bytes]);
-            self.threads
-        ]));
+        let chunk_buffers = ChunkBufferList::new(self.threads, self.chunk_size_bytes);
 
         let new_positions =
             self.do_iteration(chunk_buffers.clone(), Some(&[&old, &current]), depth);
@@ -1194,12 +1189,7 @@ impl<
         match self.read_state() {
             Some(s) => match s {
                 State::Iteration { mut depth } => {
-                    let chunk_buffers =
-                        Arc::new(Mutex::new(vec![
-                            Some(vec![0u8; self.chunk_size_bytes]);
-                            self.threads
-                        ]));
-
+                    let chunk_buffers = ChunkBufferList::new(self.threads, self.chunk_size_bytes);
                     while self.do_iteration(chunk_buffers.clone(), None, depth) != 0 {
                         depth += 1;
                     }
@@ -1210,12 +1200,7 @@ impl<
                     self.end_of_depth_cleanup(depth);
                     depth += 1;
 
-                    let chunk_buffers =
-                        Arc::new(Mutex::new(vec![
-                            Some(vec![0u8; self.chunk_size_bytes]);
-                            self.threads
-                        ]));
-
+                    let chunk_buffers = ChunkBufferList::new(self.threads, self.chunk_size_bytes);
                     while self.do_iteration(chunk_buffers.clone(), None, depth) != 0 {
                         depth += 1;
                     }
