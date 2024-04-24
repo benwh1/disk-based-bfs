@@ -6,11 +6,7 @@ use std::{
 };
 
 use cityhasher::{CityHasher, HashSet};
-use rand::{
-    distributions::{Alphanumeric, DistString},
-    SeedableRng,
-};
-use rand_wyrand::WyRand;
+use rand::distributions::{Alphanumeric, DistString};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::callback::BfsCallback;
@@ -391,8 +387,7 @@ impl<
 
         std::fs::create_dir_all(&dir_path).unwrap();
 
-        let mut rng =
-            WyRand::seed_from_u64((depth << 32 | updated_chunk_idx << 16 | from_chunk_idx) as u64);
+        let mut rng = rand::thread_rng();
         let file_name = Alphanumeric.sample_string(&mut rng, 16);
         let mut file_path = dir_path.join(file_name);
         file_path.set_extension("dat");
