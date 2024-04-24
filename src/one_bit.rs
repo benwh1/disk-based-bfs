@@ -6,6 +6,11 @@ use std::{
 };
 
 use cityhasher::{CityHasher, HashSet};
+use rand::{
+    distributions::{Alphanumeric, DistString},
+    SeedableRng,
+};
+use rand_wyrand::WyRand;
 use serde_derive::{Deserialize, Serialize};
 
 use crate::callback::BfsCallback;
@@ -386,8 +391,13 @@ impl<
 
         std::fs::create_dir_all(&dir_path).unwrap();
 
-        let part = std::fs::read_dir(&dir_path).unwrap().flatten().count();
-        let file_path_tmp = dir_path.join(format!("part-{part}.dat.tmp"));
+        let mut rng =
+            WyRand::seed_from_u64((depth << 32 | updated_chunk_idx << 16 | from_chunk_idx) as u64);
+        let file_name = Alphanumeric.sample_string(&mut rng, 16);
+        let mut file_path = dir_path.join(file_name);
+        file_path.set_extension("dat");
+
+        let file_path_tmp = file_path.with_extension("tmp");
         let file = File::create(&file_path_tmp).unwrap();
         let mut writer = BufWriter::new(file);
 
@@ -399,7 +409,6 @@ impl<
 
         drop(writer);
 
-        let file_path = dir_path.join(format!("part-{part}.dat"));
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
@@ -891,7 +900,7 @@ impl<
             .map(|chunk_idx| {
                 let dir_path = self.update_chunk_from_chunk_dir_path(depth + 1, chunk_idx, 0);
                 std::fs::create_dir_all(&dir_path).unwrap();
-                let file_path = dir_path.join("part-0.dat");
+                let file_path = dir_path.join("update.dat");
                 let file = File::create(&file_path).unwrap();
                 BufWriter::new(file)
             })
