@@ -1061,10 +1061,14 @@ impl<
                         let (lock, cvar) = &*pair;
                         let mut has_work = lock.lock().unwrap();
 
+                        tracing::debug!("[Thread {t}] waiting for work");
+
                         // Wait for work
                         while !*has_work {
                             has_work = cvar.wait(has_work).unwrap();
                         }
+
+                        tracing::debug!("[Thread {t}] checking for work");
 
                         *has_work = false;
                         drop(has_work);
@@ -1112,6 +1116,11 @@ impl<
                                 depth + 2,
                             );
                             self.compress_update_files(&mut chunk_buffer, depth + 2, chunk_idx);
+                            tracing::info!(
+                                "[Thread {t}] finished compressing update files for depth {} -> {} chunk {chunk_idx}",
+                                depth + 1,
+                                depth + 2,
+                            );
 
                             // Set the state back to not compressing
                             let mut update_file_states_lock = update_file_states.lock().unwrap();
@@ -1146,6 +1155,7 @@ impl<
                             let mut chunk_buffer = chunk_buffers.take().unwrap();
 
                             // Process the chunk
+                            tracing::info!("[Thread {t}] processing depth {depth} chunk {chunk_idx}");
                             let chunk_new = self.process_chunk(
                                 &mut chunk_buffer,
                                 create_chunk_hashsets,
@@ -1153,6 +1163,8 @@ impl<
                                 depth,
                                 chunk_idx,
                             );
+                            tracing::info!("[Thread {t}] finished processing depth {depth} chunk {chunk_idx}");
+
                             *new_states.lock().unwrap() += chunk_new;
 
                             // Set the state to expanded
