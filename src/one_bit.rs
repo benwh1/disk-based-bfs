@@ -499,16 +499,33 @@ impl<
             .join(format!("chunk-{chunk_idx}.dat"))
     }
 
-    fn mark_chunk_exhausted(&self, chunk_idx: usize) {
+    fn mark_chunk_exhausted(&self, depth: usize, chunk_idx: usize) {
         let dir_path = self.exhausted_chunk_dir_path();
         std::fs::create_dir_all(&dir_path).unwrap();
 
+        let file_path_tmp = self
+            .exhausted_chunk_file_path(chunk_idx)
+            .with_extension("tmp");
+        let mut file = File::create(&file_path_tmp).unwrap();
+        file.write_all(&depth.to_le_bytes()).unwrap();
+        drop(file);
+
         let file_path = self.exhausted_chunk_file_path(chunk_idx);
-        File::create(file_path).unwrap();
+        std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
-    fn is_chunk_exhausted(&self, chunk_idx: usize) -> bool {
-        self.exhausted_chunk_file_path(chunk_idx).exists()
+    fn chunk_exhausted_depth(&self, chunk_idx: usize) -> Option<usize> {
+        let file_path = self.exhausted_chunk_file_path(chunk_idx);
+
+        if !file_path.exists() {
+            return None;
+        }
+
+        let mut file = File::open(file_path).unwrap();
+        let mut buf = [0u8; std::mem::size_of::<usize>()];
+        file.read_exact(&mut buf).unwrap();
+
+        Some(usize::from_le_bytes(buf))
     }
 
     fn compress_update_files(&self, update_buffer: &mut [u8], depth: usize, chunk_idx: usize) {
@@ -919,10 +936,15 @@ impl<
     ) -> u64 {
         let t = thread;
 
-        if self.is_chunk_exhausted(chunk_idx) {
-            tracing::info!("[Thread {t}] chunk {chunk_idx} is exhausted");
-            tracing::info!("[Thread {t}] depth {} chunk {chunk_idx} new 0", depth + 1);
-            return 0;
+        if let Some(d) = self.chunk_exhausted_depth(chunk_idx) {
+            // If d > depth, then we must have written the exhausted file, and then the program was
+            // terminated before we could delete the chunk file, and we are now re-processing the
+            // same chunk. In that case, there are still states to count.
+            if d <= depth {
+                tracing::info!("[Thread {t}] chunk {chunk_idx} is exhausted");
+                tracing::info!("[Thread {t}] depth {} chunk {chunk_idx} new 0", depth + 1);
+                return 0;
+            }
         }
 
         if let Some(hashsets) = create_chunk_hashsets {
@@ -960,10 +982,12 @@ impl<
         tracing::info!("[Thread {t}] writing depth {} chunk {chunk_idx}", depth + 1);
         self.write_chunk(chunk_buffer, depth + 1, chunk_idx);
 
-        // Check if the chunk is exhausted
+        // Check if the chunk is exhausted. If so, there are no new positions at depth `depth + 2`
+        // or beyond. The depth written to the exhausted file is `depth + 1`, which is the maximum
+        // depth of a state in this chunk.
         if chunk_buffer.iter().all(|&byte| byte == 0xFF) {
             tracing::info!("[Thread {t}] marking chunk {chunk_idx} as exhausted");
-            self.mark_chunk_exhausted(chunk_idx);
+            self.mark_chunk_exhausted(depth + 1, chunk_idx);
         }
 
         tracing::info!("[Thread {t}] deleting depth {depth} chunk {chunk_idx}");
