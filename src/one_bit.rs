@@ -759,7 +759,6 @@ impl<
         let mut current = HashSet::with_hasher(CityHasher::default());
         let mut next = HashSet::with_hasher(CityHasher::default());
 
-        let mut expander = self.expander.clone();
         let mut expanded = [0u64; EXPANSION_NODES];
         let mut depth = 0;
 
@@ -779,19 +778,53 @@ impl<
         tracing::info!("starting in-memory BFS");
 
         loop {
-            let mut callback = self.callback.clone();
-
             new = 0;
 
-            for &encoded in &current {
-                expander(encoded, &mut expanded);
-                for node in expanded {
-                    if !old.contains(&node) && !current.contains(&node) && next.insert(node) {
-                        new += 1;
-                        callback.new_state(depth + 1, node);
+            std::thread::scope(|s| {
+                let threads = (0..self.threads)
+                    .map(|t| {
+                        let current = &current;
+                        let old = &old;
+
+                        s.spawn(move || {
+                            let mut expander = self.expander.clone();
+
+                            let mut next = HashSet::with_hasher(CityHasher::default());
+
+                            let thread_start = self.state_size / self.threads as u64 * t as u64;
+                            let thread_end = if t == self.threads - 1 {
+                                self.state_size
+                            } else {
+                                self.state_size / self.threads as u64 * (t as u64 + 1)
+                            };
+
+                            for &encoded in current
+                                .iter()
+                                .filter(|&&val| (thread_start..thread_end).contains(&val))
+                            {
+                                expander(encoded, &mut expanded);
+                                for node in expanded {
+                                    if !old.contains(&node) && !current.contains(&node) {
+                                        next.insert(node);
+                                    }
+                                }
+                            }
+
+                            next
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                for thread in threads {
+                    let mut thread_next = thread.join().unwrap();
+                    for node in thread_next.drain() {
+                        if next.insert(node) {
+                            new += 1;
+                            callback.new_state(depth + 1, node);
+                        }
                     }
                 }
-            }
+            });
             callback.end_of_chunk(depth + 1, 0);
 
             depth += 1;
