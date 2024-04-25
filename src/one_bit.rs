@@ -1085,22 +1085,32 @@ impl<
         // `depth + 2`, so we can delete the directories (which should be empty) for the
         // previous depth.
         for root_idx in 0..self.settings.root_directories.len() {
+            tracing::info!("Deleting root directory {root_idx} depth {depth} chunk files");
             let dir_path = self.settings.chunk_dir_path(depth, root_idx);
             if dir_path.exists() {
                 std::fs::remove_dir_all(dir_path).unwrap();
             }
 
+            tracing::info!(
+                "Deleting root directory {root_idx} depth {} update files",
+                depth + 1
+            );
             let dir_path = self.settings.update_depth_dir_path(depth + 1, root_idx);
             if dir_path.exists() {
                 std::fs::remove_dir_all(dir_path).unwrap();
             }
 
+            tracing::info!(
+                "Deleting root directory {root_idx} depth {} update arrays",
+                depth + 1
+            );
             let dir_path = self.settings.update_array_dir_path(depth + 1, root_idx);
             if dir_path.exists() {
                 std::fs::remove_dir_all(dir_path).unwrap();
             }
         }
 
+        tracing::info!("Deleting depth {} new positions files", depth + 1);
         self.delete_new_positions_data_dir(depth + 1);
     }
 
