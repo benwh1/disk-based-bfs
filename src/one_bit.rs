@@ -141,12 +141,19 @@ struct ChunkBufferList {
 }
 
 impl ChunkBufferList {
-    fn new(num_buffers: usize, buffer_size: usize) -> Self {
-        let buffers = (0..num_buffers)
-            .map(|_| Some(vec![0; buffer_size]))
-            .collect();
+    fn new_empty(num_buffers: usize) -> Self {
+        let buffers = vec![None; num_buffers];
         let buffers = Arc::new(Mutex::new(buffers));
         Self { buffers }
+    }
+
+    fn fill(&self, buffer_size: usize) {
+        let mut lock = self.buffers.lock().unwrap();
+        for buf in lock.iter_mut() {
+            if buf.is_none() {
+                buf.replace(vec![0; buffer_size]);
+            }
+        }
     }
 
     fn take(&self) -> Option<Vec<u8>> {
@@ -389,7 +396,7 @@ impl<
     > Bfs<'a, Expander, Callback, EXPANSION_NODES>
 {
     pub fn new(settings: &'a BfsSettings, expander: Expander, callback: Callback) -> Self {
-        let chunk_buffers = ChunkBufferList::new(settings.threads, settings.chunk_size_bytes);
+        let chunk_buffers = ChunkBufferList::new_empty(settings.threads);
         let update_file_manager = UpdateFileManager::new(settings);
 
         Self {
@@ -1124,6 +1131,10 @@ impl<
         // and writing in this iteration
         self.update_file_manager.read_sizes_from_disk(depth + 1);
         self.update_file_manager.read_sizes_from_disk(depth + 2);
+
+        // If this is the first time that `do_iteration` was called, then we will need to fill the
+        // chunk buffers. After the first, they should already be full, so this should do nothing.
+        self.chunk_buffers.fill(self.settings.chunk_size_bytes);
 
         let new_states = Arc::new(Mutex::new(0u64));
 
