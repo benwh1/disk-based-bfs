@@ -392,7 +392,7 @@ impl<'a> UpdateFileManager<'a> {
 
         let mut lock = self.sizes.write().unwrap();
         lock.entry(depth)
-            .and_modify(|entry| entry[chunk_idx] -= bytes_deleted);
+            .and_modify(|entry| entry[chunk_idx] = entry[chunk_idx].saturating_sub(bytes_deleted));
     }
 
     fn files_size(&self, depth: usize, chunk_idx: usize) -> u64 {
