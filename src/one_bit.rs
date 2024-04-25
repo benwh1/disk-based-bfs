@@ -2,7 +2,7 @@ use std::{
     fs::File,
     io::{BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Condvar, Mutex, RwLock},
 };
 
 use cityhasher::{CityHasher, HashSet};
@@ -1051,11 +1051,11 @@ impl<
             CurrentlyCompressing,
         }
 
-        let chunk_states = Arc::new(Mutex::new(vec![
+        let chunk_states = Arc::new(RwLock::new(vec![
             ChunkState::NotExpanded;
             self.num_array_chunks()
         ]));
-        let update_file_states = Arc::new(Mutex::new(vec![
+        let update_file_states = Arc::new(RwLock::new(vec![
             UpdateFileState::NotCompressing;
             self.num_array_chunks()
         ]));
@@ -1093,15 +1093,17 @@ impl<
                         drop(has_work);
 
                         // If everything is done, notify all and break
-                        if chunk_states.lock().unwrap().iter().all(|&state| state == ChunkState::Expanded) {
+                        let chunk_states_read = chunk_states.read().unwrap();
+                        if chunk_states_read.iter().all(|&state| state == ChunkState::Expanded) {
                             *lock.lock().unwrap() = true;
                             cvar.notify_all();
                             break;
                         }
+                        drop(chunk_states_read);
 
                         // Check for update files to compress
-                        let mut update_file_states_lock = update_file_states.lock().unwrap();
-                        let chunk_idx = update_file_states_lock.iter_mut().enumerate().find_map(|(i, state)| {
+                        let update_file_states_read = update_file_states.read().unwrap();
+                        let chunk_idx = update_file_states_read.iter().enumerate().find_map(|(i, state)| {
                             if *state == UpdateFileState::CurrentlyCompressing {
                                 return None;
                             }
@@ -1116,12 +1118,21 @@ impl<
                                 return None;
                             }
 
-                            *state = UpdateFileState::CurrentlyCompressing;
                             Some(i)
                         });
-                        drop(update_file_states_lock);
+                        drop(update_file_states_read);
 
                         if let Some(chunk_idx) = chunk_idx {
+                            // Set the state to currently compressing
+                            let mut update_file_states_write = update_file_states.write().unwrap();
+                            if update_file_states_write[chunk_idx] == UpdateFileState::NotCompressing {
+                                update_file_states_write[chunk_idx] = UpdateFileState::CurrentlyCompressing;
+                            } else {
+                                // Another thread got here first
+                                continue;
+                            }
+                            drop(update_file_states_write);
+
                             *lock.lock().unwrap() = true;
                             cvar.notify_one();
 
@@ -1142,9 +1153,9 @@ impl<
                             );
 
                             // Set the state back to not compressing
-                            let mut update_file_states_lock = update_file_states.lock().unwrap();
-                            update_file_states_lock[chunk_idx] = UpdateFileState::NotCompressing;
-                            drop(update_file_states_lock);
+                            let mut update_file_states_write = update_file_states.write().unwrap();
+                            update_file_states_write[chunk_idx] = UpdateFileState::NotCompressing;
+                            drop(update_file_states_write);
 
                             // Put the chunk buffer back
                             chunk_buffers.put(chunk_buffer);
@@ -1155,18 +1166,23 @@ impl<
                         }
 
                         // Check for chunks to expand
-                        let mut chunk_states_lock = chunk_states.lock().unwrap();
-                        let chunk_idx = chunk_states_lock.iter_mut().enumerate().find_map(|(i, state)| {
-                            if *state == ChunkState::NotExpanded {
-                                *state = ChunkState::CurrentlyExpanding;
-                                Some(i)
-                            } else {
-                                None
-                            }
+                        let chunk_states_read = chunk_states.read().unwrap();
+                        let chunk_idx = chunk_states_read.iter().position(|&state| {
+                            state == ChunkState::NotExpanded
                         });
-                        drop(chunk_states_lock);
+                        drop(chunk_states_read);
 
                         if let Some(chunk_idx) = chunk_idx {
+                            // Set the state to currently expanding
+                            let mut chunk_states_write = chunk_states.write().unwrap();
+                            if chunk_states_write[chunk_idx] == ChunkState::NotExpanded {
+                                chunk_states_write[chunk_idx] = ChunkState::CurrentlyExpanding;
+                            } else {
+                                // Another thread got here first
+                                continue;
+                            }
+                            drop(chunk_states_write);
+
                             *lock.lock().unwrap() = true;
                             cvar.notify_one();
 
@@ -1187,9 +1203,9 @@ impl<
                             *new_states.lock().unwrap() += chunk_new;
 
                             // Set the state to expanded
-                            let mut chunk_states_lock = chunk_states.lock().unwrap();
-                            chunk_states_lock[chunk_idx] = ChunkState::Expanded;
-                            drop(chunk_states_lock);
+                            let mut chunk_states_write = chunk_states.write().unwrap();
+                            chunk_states_write[chunk_idx] = ChunkState::Expanded;
+                            drop(chunk_states_write);
 
                             // Put the chunk buffer back
                             chunk_buffers.put(chunk_buffer);
