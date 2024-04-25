@@ -268,6 +268,14 @@ impl<
         const EXPANSION_NODES: usize,
     > Bfs<Expander, Callback, EXPANSION_NODES>
 {
+    pub fn new(expander: Expander, callback: Callback, settings: BfsSettings) -> Self {
+        Self {
+            settings,
+            expander,
+            callback,
+        }
+    }
+
     fn read_new_positions_data_file(&self, depth: usize, chunk_idx: usize) -> u64 {
         let file_path = self.settings.new_positions_data_file_path(depth, chunk_idx);
         let mut file = File::open(file_path).unwrap();
