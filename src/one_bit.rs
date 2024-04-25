@@ -1137,11 +1137,6 @@ impl<
             self.settings.num_array_chunks()
         ]));
 
-        // Make sure the update files sizes are up to date for the files that we will be reading
-        // and writing in this iteration
-        self.update_file_manager.read_sizes_from_disk(depth + 1);
-        self.update_file_manager.read_sizes_from_disk(depth + 2);
-
         // If this is the first time that `do_iteration` was called, then we will need to fill the
         // chunk buffers. After the first, they should already be full, so this should do nothing.
         self.chunk_buffers.fill(self.settings.chunk_size_bytes);
@@ -1362,6 +1357,13 @@ impl<
         match self.read_state() {
             Some(s) => match s {
                 State::Iteration { mut depth } => {
+                    // Initialize update file manager with the current update file sizes
+                    tracing::info!("reading depth {} update file sizes from disk", depth + 1);
+                    self.update_file_manager.read_sizes_from_disk(depth + 1);
+
+                    tracing::info!("reading depth {} update file sizes from disk", depth + 1);
+                    self.update_file_manager.read_sizes_from_disk(depth + 2);
+
                     while self.do_iteration(None, depth) != 0 {
                         depth += 1;
                     }
@@ -1371,6 +1373,13 @@ impl<
                 State::Cleanup { mut depth } => {
                     self.end_of_depth_cleanup(depth);
                     depth += 1;
+
+                    // Initialize update file manager with the current update file sizes
+                    tracing::info!("reading depth {} update file sizes from disk", depth + 1);
+                    self.update_file_manager.read_sizes_from_disk(depth + 1);
+
+                    tracing::info!("reading depth {} update file sizes from disk", depth + 1);
+                    self.update_file_manager.read_sizes_from_disk(depth + 2);
 
                     while self.do_iteration(None, depth) != 0 {
                         depth += 1;
