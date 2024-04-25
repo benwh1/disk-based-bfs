@@ -11,13 +11,7 @@ use serde_derive::{Deserialize, Serialize};
 
 use crate::callback::BfsCallback;
 
-pub struct BfsBuilder<
-    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
-    Callback: BfsCallback + Clone + Sync,
-    const EXPANSION_NODES: usize,
-> {
-    expander: Option<Expander>,
-    callback: Option<Callback>,
+pub struct BfsSettingsBuilder {
     threads: usize,
     chunk_size_bytes: Option<usize>,
     update_set_capacity: Option<usize>,
@@ -29,27 +23,15 @@ pub struct BfsBuilder<
     update_files_compression_threshold: Option<u64>,
 }
 
-impl<
-        Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
-        Callback: BfsCallback + Clone + Sync,
-        const EXPANSION_NODES: usize,
-    > Default for BfsBuilder<Expander, Callback, EXPANSION_NODES>
-{
+impl Default for BfsSettingsBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<
-        Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
-        Callback: BfsCallback + Clone + Sync,
-        const EXPANSION_NODES: usize,
-    > BfsBuilder<Expander, Callback, EXPANSION_NODES>
-{
+impl BfsSettingsBuilder {
     pub fn new() -> Self {
         Self {
-            expander: None,
-            callback: None,
             threads: 1,
             chunk_size_bytes: None,
             update_set_capacity: None,
@@ -60,16 +42,6 @@ impl<
             initial_memory_limit: None,
             update_files_compression_threshold: None,
         }
-    }
-
-    pub fn expander(mut self, expander: Expander) -> Self {
-        self.expander = Some(expander);
-        self
-    }
-
-    pub fn callback(mut self, callback: Callback) -> Self {
-        self.callback = Some(callback);
-        self
     }
 
     pub fn threads(mut self, threads: usize) -> Self {
@@ -123,7 +95,7 @@ impl<
         self
     }
 
-    pub fn build(self) -> Option<Bfs<Expander, Callback, EXPANSION_NODES>> {
+    pub fn build(self) -> Option<BfsSettings> {
         // Require that all chunks are the same size
         let chunk_size_bytes = self.chunk_size_bytes?;
         let state_size = self.state_size? as usize;
@@ -131,9 +103,7 @@ impl<
             return None;
         }
 
-        Some(Bfs {
-            expander: self.expander?,
-            callback: self.callback?,
+        Some(BfsSettings {
             threads: self.threads,
             chunk_size_bytes: self.chunk_size_bytes?,
             update_set_capacity: self.update_set_capacity?,
@@ -194,13 +164,7 @@ impl ChunkBufferList {
     }
 }
 
-pub struct Bfs<
-    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
-    Callback: BfsCallback + Clone + Sync,
-    const EXPANSION_NODES: usize,
-> {
-    expander: Expander,
-    callback: Callback,
+pub struct BfsSettings {
     threads: usize,
     chunk_size_bytes: usize,
     update_set_capacity: usize,
@@ -212,12 +176,7 @@ pub struct Bfs<
     update_files_compression_threshold: u64,
 }
 
-impl<
-        Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
-        Callback: BfsCallback + Clone + Sync,
-        const EXPANSION_NODES: usize,
-    > Bfs<Expander, Callback, EXPANSION_NODES>
-{
+impl BfsSettings {
     fn array_bytes(&self) -> usize {
         self.state_size.div_ceil(8) as usize
     }
@@ -291,9 +250,26 @@ impl<
         self.new_positions_data_dir_path(depth)
             .join(format!("chunk-{chunk_idx}.dat"))
     }
+}
 
+pub struct Bfs<
+    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+    Callback: BfsCallback + Clone + Sync,
+    const EXPANSION_NODES: usize,
+> {
+    settings: BfsSettings,
+    expander: Expander,
+    callback: Callback,
+}
+
+impl<
+        Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+        Callback: BfsCallback + Clone + Sync,
+        const EXPANSION_NODES: usize,
+    > Bfs<Expander, Callback, EXPANSION_NODES>
+{
     fn read_new_positions_data_file(&self, depth: usize, chunk_idx: usize) -> u64 {
-        let file_path = self.new_positions_data_file_path(depth, chunk_idx);
+        let file_path = self.settings.new_positions_data_file_path(depth, chunk_idx);
         let mut file = File::open(file_path).unwrap();
         let mut buf = [0u8; 8];
         file.read_exact(&mut buf).unwrap();
@@ -301,49 +277,50 @@ impl<
     }
 
     fn write_new_positions_data_file(&self, new: u64, depth: usize, chunk_idx: usize) {
-        let dir_path = self.new_positions_data_dir_path(depth);
+        let dir_path = self.settings.new_positions_data_dir_path(depth);
         std::fs::create_dir_all(&dir_path).unwrap();
 
         let file_path_tmp = self
+            .settings
             .new_positions_data_file_path(depth, chunk_idx)
             .with_extension("tmp");
         let mut file = File::create(&file_path_tmp).unwrap();
         file.write_all(&new.to_le_bytes()).unwrap();
         drop(file);
 
-        let file_path = self.new_positions_data_file_path(depth, chunk_idx);
+        let file_path = self.settings.new_positions_data_file_path(depth, chunk_idx);
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
     fn delete_new_positions_data_dir(&self, depth: usize) {
-        let file_path = self.new_positions_data_dir_path(depth);
+        let file_path = self.settings.new_positions_data_dir_path(depth);
         if file_path.exists() {
             std::fs::remove_dir_all(file_path).unwrap();
         }
     }
 
     fn read_state(&self) -> Option<State> {
-        let file_path = self.state_file_path();
+        let file_path = self.settings.state_file_path();
         let str = std::fs::read_to_string(file_path).ok()?;
         serde_json::from_str(&str).ok()
     }
 
     fn write_state(&self, state: State) {
         let str = serde_json::to_string(&state).unwrap();
-        let file_path_tmp = self.state_file_path().with_extension("tmp");
+        let file_path_tmp = self.settings.state_file_path().with_extension("tmp");
         std::fs::write(&file_path_tmp, &str).unwrap();
-        let file_path = self.state_file_path();
+        let file_path = self.settings.state_file_path();
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
     fn try_read_chunk(&self, chunk_buffer: &mut [u8], depth: usize, chunk_idx: usize) -> bool {
-        let file_path = self.chunk_file_path(depth, chunk_idx);
+        let file_path = self.settings.chunk_file_path(depth, chunk_idx);
         let Ok(mut file) = File::open(file_path) else {
             return false;
         };
 
         // Check that the file size is correct
-        let expected_size = self.chunk_size_bytes;
+        let expected_size = self.settings.chunk_size_bytes;
         let actual_size = file.metadata().unwrap().len();
         assert_eq!(expected_size, actual_size as usize);
 
@@ -358,7 +335,7 @@ impl<
         depth: usize,
         chunk_idx: usize,
     ) -> bool {
-        let file_path = self.update_array_file_path(depth, chunk_idx);
+        let file_path = self.settings.update_array_file_path(depth, chunk_idx);
         if !file_path.exists() {
             return false;
         }
@@ -366,7 +343,7 @@ impl<
         let mut file = File::open(file_path).unwrap();
 
         // Check that the file size is correct
-        let expected_size = self.chunk_size_bytes;
+        let expected_size = self.settings.chunk_size_bytes;
         let actual_size = file.metadata().unwrap().len();
         assert_eq!(expected_size, actual_size as usize);
 
@@ -382,8 +359,11 @@ impl<
         updated_chunk_idx: usize,
         from_chunk_idx: usize,
     ) {
-        let dir_path =
-            self.update_chunk_from_chunk_dir_path(depth, updated_chunk_idx, from_chunk_idx);
+        let dir_path = self.settings.update_chunk_from_chunk_dir_path(
+            depth,
+            updated_chunk_idx,
+            from_chunk_idx,
+        );
 
         std::fs::create_dir_all(&dir_path).unwrap();
 
@@ -408,7 +388,7 @@ impl<
     }
 
     fn write_update_array(&self, update_buffer: &[u8], depth: usize, chunk_idx: usize) {
-        let dir_path = self.update_array_dir_path(depth, chunk_idx);
+        let dir_path = self.settings.update_array_dir_path(depth, chunk_idx);
 
         std::fs::create_dir_all(&dir_path).unwrap();
 
@@ -418,7 +398,7 @@ impl<
         file.write_all(update_buffer).unwrap();
         drop(file);
 
-        let file_path = self.update_array_file_path(depth, chunk_idx);
+        let file_path = self.settings.update_array_file_path(depth, chunk_idx);
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
@@ -437,7 +417,7 @@ impl<
     }
 
     fn write_chunk(&self, chunk_buffer: &[u8], depth: usize, chunk_idx: usize) {
-        let dir_path = self.chunk_dir_path(depth, chunk_idx);
+        let dir_path = self.settings.chunk_dir_path(depth, chunk_idx);
 
         std::fs::create_dir_all(&dir_path).unwrap();
 
@@ -447,27 +427,29 @@ impl<
         file.write_all(chunk_buffer).unwrap();
         drop(file);
 
-        let file_path = self.chunk_file_path(depth, chunk_idx);
+        let file_path = self.settings.chunk_file_path(depth, chunk_idx);
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
     fn delete_chunk_file(&self, depth: usize, chunk_idx: usize) {
-        let file_path = self.chunk_file_path(depth, chunk_idx);
+        let file_path = self.settings.chunk_file_path(depth, chunk_idx);
         if file_path.exists() {
             std::fs::remove_file(file_path).unwrap();
         }
     }
 
     fn delete_update_files(&self, depth: usize, chunk_idx: usize) {
-        let dir_path = self.update_chunk_dir_path(depth, chunk_idx);
+        let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
         if dir_path.exists() {
             std::fs::remove_dir_all(dir_path).unwrap();
         }
     }
 
     fn delete_used_update_files(&self, depth: usize, chunk_idx: usize) {
-        for from_chunk_idx in 0..self.num_array_chunks() {
-            let dir_path = self.update_chunk_from_chunk_dir_path(depth, chunk_idx, from_chunk_idx);
+        for from_chunk_idx in 0..self.settings.num_array_chunks() {
+            let dir_path =
+                self.settings
+                    .update_chunk_from_chunk_dir_path(depth, chunk_idx, from_chunk_idx);
 
             let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
                 continue;
@@ -484,14 +466,14 @@ impl<
     }
 
     fn delete_update_array(&self, depth: usize, chunk_idx: usize) {
-        let file_path = self.update_array_file_path(depth, chunk_idx);
+        let file_path = self.settings.update_array_file_path(depth, chunk_idx);
         if file_path.exists() {
             std::fs::remove_file(file_path).unwrap();
         }
     }
 
     fn exhausted_chunk_dir_path(&self) -> PathBuf {
-        self.root_dir(0).join("exhausted-chunks")
+        self.settings.root_dir(0).join("exhausted-chunks")
     }
 
     fn exhausted_chunk_file_path(&self, chunk_idx: usize) -> PathBuf {
@@ -535,8 +517,10 @@ impl<
             update_buffer.fill(0);
         }
 
-        for from_chunk_idx in 0..self.num_array_chunks() {
-            let dir_path = self.update_chunk_from_chunk_dir_path(depth, chunk_idx, from_chunk_idx);
+        for from_chunk_idx in 0..self.settings.num_array_chunks() {
+            let dir_path =
+                self.settings
+                    .update_chunk_from_chunk_dir_path(depth, chunk_idx, from_chunk_idx);
 
             let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
                 continue;
@@ -585,10 +569,10 @@ impl<
 
         let mut update_sets = vec![
             HashSet::<u32, CityHasher>::with_capacity_and_hasher(
-                self.update_set_capacity,
+                self.settings.update_set_capacity,
                 CityHasher::default()
             );
-            self.num_array_chunks()
+            self.settings.num_array_chunks()
         ];
 
         let mut callback = self.callback.clone();
@@ -626,7 +610,7 @@ impl<
         chunk_idx: usize,
     ) {
         // Check if any of the update sets may go over capacity
-        let max_new_nodes = self.capacity_check_frequency * EXPANSION_NODES;
+        let max_new_nodes = self.settings.capacity_check_frequency * EXPANSION_NODES;
 
         for (idx, set) in update_sets.iter_mut().enumerate() {
             if set.len() + max_new_nodes > set.capacity() {
@@ -651,8 +635,10 @@ impl<
         let mut expander = self.expander.clone();
         let mut expanded = [0u64; EXPANSION_NODES];
 
-        for i in 0..self.num_array_chunks() {
-            let dir_path = self.update_chunk_from_chunk_dir_path(depth + 1, chunk_idx, i);
+        for i in 0..self.settings.num_array_chunks() {
+            let dir_path = self
+                .settings
+                .update_chunk_from_chunk_dir_path(depth + 1, chunk_idx, i);
 
             let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
                 continue;
@@ -683,7 +669,7 @@ impl<
                         let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
                         callback.new_state(depth + 1, encoded);
 
-                        if new_positions as usize % self.capacity_check_frequency == 0 {
+                        if new_positions as usize % self.settings.capacity_check_frequency == 0 {
                             self.check_update_set_capacity(update_sets, depth + 2, chunk_idx);
                         }
 
@@ -719,14 +705,14 @@ impl<
         let mut expander = self.expander.clone();
         let mut expanded = [0u64; EXPANSION_NODES];
 
-        let file_path = self.update_array_file_path(depth + 1, chunk_idx);
+        let file_path = self.settings.update_array_file_path(depth + 1, chunk_idx);
         if !file_path.exists() {
             return 0;
         }
 
         let file = File::open(file_path).unwrap();
         let file_len = file.metadata().unwrap().len() as usize;
-        assert_eq!(file_len, self.chunk_size_bytes);
+        assert_eq!(file_len, self.settings.chunk_size_bytes);
 
         let mut reader = BufReader::new(file);
 
@@ -750,7 +736,7 @@ impl<
                     let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
                     callback.new_state(depth + 1, encoded);
 
-                    if new_positions as usize % self.capacity_check_frequency == 0 {
+                    if new_positions as usize % self.settings.capacity_check_frequency == 0 {
                         self.check_update_set_capacity(update_sets, depth + 2, chunk_idx);
                     }
 
@@ -774,7 +760,7 @@ impl<
     }
 
     fn in_memory_bfs(&self) -> InMemoryBfsResult {
-        let max_capacity = self.initial_memory_limit / 8;
+        let max_capacity = self.settings.initial_memory_limit / 8;
 
         let mut old = HashSet::with_capacity_and_hasher(max_capacity / 2, CityHasher::default());
         let mut current = HashSet::with_hasher(CityHasher::default());
@@ -785,7 +771,7 @@ impl<
 
         let mut callback = self.callback.clone();
 
-        for &state in &self.initial_states {
+        for &state in &self.settings.initial_states {
             if current.insert(state) {
                 callback.new_state(depth + 1, state);
             }
@@ -802,7 +788,7 @@ impl<
             new = 0;
 
             std::thread::scope(|s| {
-                let threads = (0..self.threads)
+                let threads = (0..self.settings.threads)
                     .map(|t| {
                         let current = &current;
                         let old = &old;
@@ -812,11 +798,13 @@ impl<
 
                             let mut next = HashSet::with_hasher(CityHasher::default());
 
-                            let thread_start = self.state_size / self.threads as u64 * t as u64;
-                            let thread_end = if t == self.threads - 1 {
-                                self.state_size
+                            let thread_start =
+                                self.settings.state_size / self.settings.threads as u64 * t as u64;
+                            let thread_end = if t == self.settings.threads - 1 {
+                                self.settings.state_size
                             } else {
-                                self.state_size / self.threads as u64 * (t as u64 + 1)
+                                self.settings.state_size / self.settings.threads as u64
+                                    * (t as u64 + 1)
                             };
 
                             for &encoded in current
@@ -883,20 +871,20 @@ impl<
     /// Converts an encoded node value to (chunk_idx, byte_idx, bit_idx)
     fn node_to_bit_coords(&self, node: u64) -> (usize, usize, usize) {
         let node = node as usize;
-        let chunk_idx = (node / 8) / self.chunk_size_bytes;
-        let byte_idx = (node / 8) % self.chunk_size_bytes;
+        let chunk_idx = (node / 8) / self.settings.chunk_size_bytes;
+        let byte_idx = (node / 8) % self.settings.chunk_size_bytes;
         let bit_idx = node % 8;
         (chunk_idx, byte_idx, bit_idx)
     }
 
     fn bit_coords_to_node(&self, chunk_idx: usize, byte_idx: usize, bit_idx: usize) -> u64 {
-        (chunk_idx * self.chunk_size_bytes * 8 + byte_idx * 8 + bit_idx) as u64
+        (chunk_idx * self.settings.chunk_size_bytes * 8 + byte_idx * 8 + bit_idx) as u64
     }
 
     /// Converts an encoded node value to (chunk_idx, chunk_offset)
     fn node_to_chunk_coords(&self, node: u64) -> (usize, u32) {
         let node = node as usize;
-        let n = self.states_per_chunk();
+        let n = self.settings.states_per_chunk();
         (node / n, (node % n) as u32)
     }
 
@@ -908,9 +896,11 @@ impl<
 
     fn create_initial_update_files(&self, next: &HashSet<u64>, depth: usize) {
         // Write values from `next` to initial update files
-        let mut update_files = (0..self.num_array_chunks())
+        let mut update_files = (0..self.settings.num_array_chunks())
             .map(|chunk_idx| {
-                let dir_path = self.update_chunk_from_chunk_dir_path(depth + 1, chunk_idx, 0);
+                let dir_path =
+                    self.settings
+                        .update_chunk_from_chunk_dir_path(depth + 1, chunk_idx, 0);
                 std::fs::create_dir_all(&dir_path).unwrap();
                 let file_path = dir_path.join("update.dat");
                 let file = File::create(&file_path).unwrap();
@@ -954,7 +944,7 @@ impl<
             tracing::info!("[Thread {t}] reading depth {depth} chunk {chunk_idx}");
             if !self.try_read_chunk(chunk_buffer, depth, chunk_idx) {
                 // No chunk file, so check that it has already been expanded
-                let next_chunk_file = self.chunk_file_path(depth + 1, chunk_idx);
+                let next_chunk_file = self.settings.chunk_file_path(depth + 1, chunk_idx);
                 assert!(
                     next_chunk_file.exists(),
                     "no chunk {chunk_idx} found at depth {depth} or {}",
@@ -1012,18 +1002,18 @@ impl<
         // We now have the array at depth `depth + 1`, and update files/arrays for depth
         // `depth + 2`, so we can delete the directories (which should be empty) for the
         // previous depth.
-        for root_idx in 0..self.root_directories.len() {
-            let dir_path = self.chunk_dir_path(depth, root_idx);
+        for root_idx in 0..self.settings.root_directories.len() {
+            let dir_path = self.settings.chunk_dir_path(depth, root_idx);
             if dir_path.exists() {
                 std::fs::remove_dir_all(dir_path).unwrap();
             }
 
-            let dir_path = self.update_depth_dir_path(depth + 1, root_idx);
+            let dir_path = self.settings.update_depth_dir_path(depth + 1, root_idx);
             if dir_path.exists() {
                 std::fs::remove_dir_all(dir_path).unwrap();
             }
 
-            let dir_path = self.update_array_dir_path(depth + 1, root_idx);
+            let dir_path = self.settings.update_array_dir_path(depth + 1, root_idx);
             if dir_path.exists() {
                 std::fs::remove_dir_all(dir_path).unwrap();
             }
@@ -1053,11 +1043,11 @@ impl<
 
         let chunk_states = Arc::new(RwLock::new(vec![
             ChunkState::NotExpanded;
-            self.num_array_chunks()
+            self.settings.num_array_chunks()
         ]));
         let update_file_states = Arc::new(RwLock::new(vec![
             UpdateFileState::NotCompressing;
-            self.num_array_chunks()
+            self.settings.num_array_chunks()
         ]));
 
         let new_states = Arc::new(Mutex::new(0u64));
@@ -1067,7 +1057,7 @@ impl<
         let pair = Arc::new((Mutex::new(false), Condvar::new()));
 
         std::thread::scope(|s| {
-            let threads = (0..self.threads)
+            let threads = (0..self.settings.threads)
                 .map(|t| {
                     let chunk_buffers = chunk_buffers.clone();
                     let new_states = new_states.clone();
@@ -1108,13 +1098,13 @@ impl<
                                 return None;
                             }
 
-                            let path = self.update_chunk_dir_path(depth + 2, i);
+                            let path = self.settings.update_chunk_dir_path(depth + 2, i);
                             let Ok(used_space) = fs_extra::dir::get_size(&path)
                             else {
                                 return None;
                             };
 
-                            if used_space <= self.update_files_compression_threshold {
+                            if used_space <= self.settings.update_files_compression_threshold {
                                 return None;
                             }
 
@@ -1252,7 +1242,8 @@ impl<
         self.create_initial_update_files(&next, depth);
         drop(next);
 
-        let chunk_buffers = ChunkBufferList::new(self.threads, self.chunk_size_bytes);
+        let chunk_buffers =
+            ChunkBufferList::new(self.settings.threads, self.settings.chunk_size_bytes);
 
         let new_positions =
             self.do_iteration(chunk_buffers.clone(), Some(&[&old, &current]), depth);
@@ -1278,7 +1269,8 @@ impl<
         match self.read_state() {
             Some(s) => match s {
                 State::Iteration { mut depth } => {
-                    let chunk_buffers = ChunkBufferList::new(self.threads, self.chunk_size_bytes);
+                    let chunk_buffers =
+                        ChunkBufferList::new(self.settings.threads, self.settings.chunk_size_bytes);
                     while self.do_iteration(chunk_buffers.clone(), None, depth) != 0 {
                         depth += 1;
                     }
@@ -1289,7 +1281,8 @@ impl<
                     self.end_of_depth_cleanup(depth);
                     depth += 1;
 
-                    let chunk_buffers = ChunkBufferList::new(self.threads, self.chunk_size_bytes);
+                    let chunk_buffers =
+                        ChunkBufferList::new(self.settings.threads, self.settings.chunk_size_bytes);
                     while self.do_iteration(chunk_buffers.clone(), None, depth) != 0 {
                         depth += 1;
                     }
