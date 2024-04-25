@@ -261,6 +261,7 @@ pub struct Bfs<
     settings: &'a BfsSettings,
     expander: Expander,
     callback: Callback,
+    chunk_buffers: ChunkBufferList,
 }
 
 impl<
@@ -271,10 +272,13 @@ impl<
     > Bfs<'a, Expander, Callback, EXPANSION_NODES>
 {
     pub fn new(settings: &'a BfsSettings, expander: Expander, callback: Callback) -> Self {
+        let chunk_buffers = ChunkBufferList::new(settings.threads, settings.chunk_size_bytes);
+
         Self {
             settings,
             expander,
             callback,
+            chunk_buffers,
         }
     }
 
@@ -1032,12 +1036,7 @@ impl<
         self.delete_new_positions_data_dir(depth + 1);
     }
 
-    fn do_iteration(
-        &self,
-        chunk_buffers: ChunkBufferList,
-        create_chunk_hashsets: Option<&[&HashSet<u64>]>,
-        depth: usize,
-    ) -> u64 {
+    fn do_iteration(&self, create_chunk_hashsets: Option<&[&HashSet<u64>]>, depth: usize) -> u64 {
         #[derive(Clone, Copy, PartialEq, Eq)]
         enum ChunkState {
             NotExpanded,
@@ -1069,7 +1068,6 @@ impl<
         std::thread::scope(|s| {
             let threads = (0..self.settings.threads)
                 .map(|t| {
-                    let chunk_buffers = chunk_buffers.clone();
                     let new_states = new_states.clone();
                     let chunk_states = chunk_states.clone();
                     let update_file_states = update_file_states.clone();
@@ -1137,7 +1135,7 @@ impl<
                             cvar.notify_one();
 
                             // Get a chunk buffer
-                            let mut chunk_buffer = chunk_buffers.take().unwrap();
+                            let mut chunk_buffer = self.chunk_buffers.take().unwrap();
 
                             // Compress the update files
                             tracing::info!(
@@ -1158,7 +1156,7 @@ impl<
                             drop(update_file_states_write);
 
                             // Put the chunk buffer back
-                            chunk_buffers.put(chunk_buffer);
+                            self.chunk_buffers.put(chunk_buffer);
 
                             *lock.lock().unwrap() = true;
                             cvar.notify_one();
@@ -1187,7 +1185,7 @@ impl<
                             cvar.notify_one();
 
                             // Get a chunk buffer
-                            let mut chunk_buffer = chunk_buffers.take().unwrap();
+                            let mut chunk_buffer = self.chunk_buffers.take().unwrap();
 
                             // Process the chunk
                             tracing::info!("[Thread {t}] processing depth {depth} chunk {chunk_idx}");
@@ -1208,7 +1206,7 @@ impl<
                             drop(chunk_states_write);
 
                             // Put the chunk buffer back
-                            chunk_buffers.put(chunk_buffer);
+                            self.chunk_buffers.put(chunk_buffer);
 
                             *lock.lock().unwrap() = true;
                             cvar.notify_one();
@@ -1252,11 +1250,7 @@ impl<
         self.create_initial_update_files(&next, depth);
         drop(next);
 
-        let chunk_buffers =
-            ChunkBufferList::new(self.settings.threads, self.settings.chunk_size_bytes);
-
-        let new_positions =
-            self.do_iteration(chunk_buffers.clone(), Some(&[&old, &current]), depth);
+        let new_positions = self.do_iteration(Some(&[&old, &current]), depth);
 
         if new_positions == 0 {
             self.write_state(State::Done);
@@ -1268,7 +1262,7 @@ impl<
 
         depth += 1;
 
-        while self.do_iteration(chunk_buffers.clone(), None, depth) != 0 {
+        while self.do_iteration(None, depth) != 0 {
             depth += 1;
         }
 
@@ -1279,9 +1273,7 @@ impl<
         match self.read_state() {
             Some(s) => match s {
                 State::Iteration { mut depth } => {
-                    let chunk_buffers =
-                        ChunkBufferList::new(self.settings.threads, self.settings.chunk_size_bytes);
-                    while self.do_iteration(chunk_buffers.clone(), None, depth) != 0 {
+                    while self.do_iteration(None, depth) != 0 {
                         depth += 1;
                     }
 
@@ -1291,9 +1283,7 @@ impl<
                     self.end_of_depth_cleanup(depth);
                     depth += 1;
 
-                    let chunk_buffers =
-                        ChunkBufferList::new(self.settings.threads, self.settings.chunk_size_bytes);
-                    while self.do_iteration(chunk_buffers.clone(), None, depth) != 0 {
+                    while self.do_iteration(None, depth) != 0 {
                         depth += 1;
                     }
 
