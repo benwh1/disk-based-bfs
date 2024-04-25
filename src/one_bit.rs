@@ -206,7 +206,7 @@ impl BfsSettings {
     }
 
     fn update_files_size_file_path(&self) -> PathBuf {
-        self.root_dir(0).join("update_files_size.dat")
+        self.root_dir(0).join("update-files-size.dat")
     }
 
     fn update_depth_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
