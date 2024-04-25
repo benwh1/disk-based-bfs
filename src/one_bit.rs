@@ -277,6 +277,11 @@ impl<'a> UpdateFileManager<'a> {
         }
     }
 
+    /// Note: the sizes are not guaranteed to be *exactly* correct, because it's possible that we
+    /// could write some update files to disk and then the program is terminated before we can write
+    /// the sizes. This isn't important though, because the sizes are only used to determine if we
+    /// should compress the update files, and it really doesn't matter if we sometimes compress them
+    /// slightly before or after the actual size reaches the threshold.
     fn write_sizes_to_disk(&self) {
         let read_lock = self.sizes.read().unwrap();
         let str = serde_json::to_string(&*read_lock).unwrap();
