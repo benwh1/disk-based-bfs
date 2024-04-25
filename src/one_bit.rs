@@ -253,22 +253,24 @@ impl BfsSettings {
 }
 
 pub struct Bfs<
+    'a,
     Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
     Callback: BfsCallback + Clone + Sync,
     const EXPANSION_NODES: usize,
 > {
-    settings: BfsSettings,
+    settings: &'a BfsSettings,
     expander: Expander,
     callback: Callback,
 }
 
 impl<
+        'a,
         Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
         Callback: BfsCallback + Clone + Sync,
         const EXPANSION_NODES: usize,
-    > Bfs<Expander, Callback, EXPANSION_NODES>
+    > Bfs<'a, Expander, Callback, EXPANSION_NODES>
 {
-    pub fn new(expander: Expander, callback: Callback, settings: BfsSettings) -> Self {
+    pub fn new(settings: &'a BfsSettings, expander: Expander, callback: Callback) -> Self {
         Self {
             settings,
             expander,
