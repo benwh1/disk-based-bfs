@@ -22,6 +22,7 @@ pub struct BfsSettingsBuilder {
     root_directories: Option<Vec<PathBuf>>,
     initial_memory_limit: Option<usize>,
     update_files_compression_threshold: Option<u64>,
+    buf_io_capacity: Option<usize>,
 }
 
 impl Default for BfsSettingsBuilder {
@@ -42,6 +43,7 @@ impl BfsSettingsBuilder {
             root_directories: None,
             initial_memory_limit: None,
             update_files_compression_threshold: None,
+            buf_io_capacity: None,
         }
     }
 
@@ -96,6 +98,11 @@ impl BfsSettingsBuilder {
         self
     }
 
+    pub fn buf_io_capacity(mut self, buf_io_capacity: usize) -> Self {
+        self.buf_io_capacity = Some(buf_io_capacity);
+        self
+    }
+
     pub fn build(self) -> Option<BfsSettings> {
         // Require that all chunks are the same size
         let chunk_size_bytes = self.chunk_size_bytes?;
@@ -114,6 +121,7 @@ impl BfsSettingsBuilder {
             root_directories: self.root_directories?,
             initial_memory_limit: self.initial_memory_limit?,
             update_files_compression_threshold: self.update_files_compression_threshold?,
+            buf_io_capacity: self.buf_io_capacity?,
         })
     }
 }
@@ -182,6 +190,7 @@ pub struct BfsSettings {
     root_directories: Vec<PathBuf>,
     initial_memory_limit: usize,
     update_files_compression_threshold: u64,
+    buf_io_capacity: usize,
 }
 
 impl BfsSettings {
@@ -333,7 +342,7 @@ impl<'a> UpdateFileManager<'a> {
 
         let file_path_tmp = file_path.with_extension("tmp");
         let file = File::create(&file_path_tmp).unwrap();
-        let mut writer = BufWriter::new(file);
+        let mut writer = BufWriter::with_capacity(self.settings.buf_io_capacity, file);
 
         let bytes_to_write = update_set.len() as u64 * 4;
 
@@ -637,7 +646,7 @@ impl<
                 ext == Some("dat") || ext == Some("used")
             }) {
                 let file = File::open(&file_path).unwrap();
-                let mut reader = BufReader::new(file);
+                let mut reader = BufReader::with_capacity(self.settings.buf_io_capacity, file);
 
                 let mut buf = [0u8; 4];
 
@@ -758,7 +767,7 @@ impl<
             for file_path in read_dir.flatten().map(|entry| entry.path()) {
                 let file = File::open(file_path).unwrap();
                 let expected_entries = file.metadata().unwrap().len() / 4;
-                let mut reader = BufReader::new(file);
+                let mut reader = BufReader::with_capacity(self.settings.buf_io_capacity, file);
 
                 // Read 4 bytes at a time, and update the current chunk
                 let mut buf = [0u8; 4];
@@ -825,7 +834,7 @@ impl<
         let file_len = file.metadata().unwrap().len() as usize;
         assert_eq!(file_len, self.settings.chunk_size_bytes);
 
-        let mut reader = BufReader::new(file);
+        let mut reader = BufReader::with_capacity(self.settings.buf_io_capacity, file);
 
         let mut buf = [0];
         let mut entries = 0;
@@ -1015,7 +1024,7 @@ impl<
                 std::fs::create_dir_all(&dir_path).unwrap();
                 let file_path = dir_path.join("update.dat");
                 let file = File::create(&file_path).unwrap();
-                BufWriter::new(file)
+                BufWriter::with_capacity(self.settings.buf_io_capacity, file)
             })
             .collect::<Vec<_>>();
 
