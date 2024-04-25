@@ -205,6 +205,10 @@ impl BfsSettings {
         self.root_dir(0).join("state.dat")
     }
 
+    fn update_files_size_file_path(&self) -> PathBuf {
+        self.root_dir(0).join("update_files_size.dat")
+    }
+
     fn update_depth_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.root_dir(chunk_idx)
             .join("update")
@@ -273,16 +277,29 @@ impl<'a> UpdateFileManager<'a> {
         }
     }
 
-    fn read_sizes_from_disk(&self, depth: usize) {
-        let sizes = (0..self.settings.num_array_chunks())
-            .map(|chunk_idx| {
-                let path = self.settings.update_chunk_dir_path(depth, chunk_idx);
-                fs_extra::dir::get_size(&path).unwrap_or_default()
-            })
-            .collect();
+    fn write_sizes_to_disk(&self) {
+        let read_lock = self.sizes.read().unwrap();
+        let str = serde_json::to_string(&*read_lock).unwrap();
+        drop(read_lock);
+
+        let file_path_tmp = self
+            .settings
+            .update_files_size_file_path()
+            .with_extension("tmp");
+        std::fs::write(&file_path_tmp, &str).unwrap();
+        let file_path = self.settings.update_files_size_file_path();
+        std::fs::rename(file_path_tmp, file_path).unwrap();
+    }
+
+    fn try_read_sizes_from_disk(&self) {
+        let file_path = self.settings.update_files_size_file_path();
+        let Ok(str) = std::fs::read_to_string(file_path) else {
+            return;
+        };
+        let hashmap = serde_json::from_str(&str).unwrap();
 
         let mut lock = self.sizes.write().unwrap();
-        lock.insert(depth, sizes);
+        *lock = hashmap;
     }
 
     fn write_update_file(
@@ -1246,6 +1263,9 @@ impl<
                             // Put the chunk buffer back
                             self.chunk_buffers.put(chunk_buffer);
 
+                            // Write new update file sizes to disk
+                            self.update_file_manager.write_sizes_to_disk();
+
                             *lock.lock().unwrap() = true;
                             cvar.notify_one();
                             continue;
@@ -1295,6 +1315,9 @@ impl<
 
                             // Put the chunk buffer back
                             self.chunk_buffers.put(chunk_buffer);
+
+                            // Write new update file sizes to disk
+                            self.update_file_manager.write_sizes_to_disk();
 
                             *lock.lock().unwrap() = true;
                             cvar.notify_one();
@@ -1362,11 +1385,7 @@ impl<
             Some(s) => match s {
                 State::Iteration { mut depth } => {
                     // Initialize update file manager with the current update file sizes
-                    tracing::info!("reading depth {} update file sizes from disk", depth + 1);
-                    self.update_file_manager.read_sizes_from_disk(depth + 1);
-
-                    tracing::info!("reading depth {} update file sizes from disk", depth + 1);
-                    self.update_file_manager.read_sizes_from_disk(depth + 2);
+                    self.update_file_manager.try_read_sizes_from_disk();
 
                     while self.do_iteration(None, depth) != 0 {
                         depth += 1;
@@ -1379,11 +1398,7 @@ impl<
                     depth += 1;
 
                     // Initialize update file manager with the current update file sizes
-                    tracing::info!("reading depth {} update file sizes from disk", depth + 1);
-                    self.update_file_manager.read_sizes_from_disk(depth + 1);
-
-                    tracing::info!("reading depth {} update file sizes from disk", depth + 1);
-                    self.update_file_manager.read_sizes_from_disk(depth + 2);
+                    self.update_file_manager.try_read_sizes_from_disk();
 
                     while self.do_iteration(None, depth) != 0 {
                         depth += 1;
