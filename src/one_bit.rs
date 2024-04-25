@@ -675,7 +675,11 @@ impl<
         callback.end_of_chunk(depth + 1, chunk_idx);
 
         // Write remaining update files
-        for (idx, set) in update_sets.iter_mut().enumerate() {
+        for (idx, set) in update_sets
+            .iter_mut()
+            .enumerate()
+            .filter(|(_, set)| !set.is_empty())
+        {
             self.update_file_manager
                 .write_update_file(set, depth + 2, idx, chunk_idx);
         }
