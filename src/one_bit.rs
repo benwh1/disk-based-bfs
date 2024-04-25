@@ -267,6 +267,7 @@ impl BfsSettings {
 struct UpdateFileManager<'a> {
     settings: &'a BfsSettings,
     sizes: RwLock<HashMap<usize, Vec<u64>>>,
+    size_file_lock: Mutex<()>,
 }
 
 impl<'a> UpdateFileManager<'a> {
@@ -274,6 +275,7 @@ impl<'a> UpdateFileManager<'a> {
         Self {
             settings,
             sizes: RwLock::new(HashMap::new()),
+            size_file_lock: Mutex::new(()),
         }
     }
 
@@ -283,6 +285,8 @@ impl<'a> UpdateFileManager<'a> {
     /// should compress the update files, and it really doesn't matter if we sometimes compress them
     /// slightly before or after the actual size reaches the threshold.
     fn write_sizes_to_disk(&self) {
+        let _lock = self.size_file_lock.lock().unwrap();
+
         let read_lock = self.sizes.read().unwrap();
         let str = serde_json::to_string(&*read_lock).unwrap();
         drop(read_lock);
