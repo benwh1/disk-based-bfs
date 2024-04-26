@@ -309,12 +309,10 @@ impl<'a> UpdateFileManager<'a> {
         let str = serde_json::to_string(&*read_lock).unwrap();
         drop(read_lock);
 
-        let file_path_tmp = self
-            .settings
-            .update_files_size_file_path()
-            .with_extension("tmp");
-        std::fs::write(&file_path_tmp, &str).unwrap();
         let file_path = self.settings.update_files_size_file_path();
+        let file_path_tmp = file_path.with_extension("tmp");
+
+        std::fs::write(&file_path_tmp, &str).unwrap();
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
@@ -355,11 +353,13 @@ impl<'a> UpdateFileManager<'a> {
 
         let bytes_to_write = updates.len() as u64 * 4;
 
+        tracing::debug!("writing file {file_path:?}");
         for &val in &*updates {
             if writer.write(&val.to_le_bytes()).unwrap() != 4 {
                 panic!("failed to write to update file");
             }
         }
+        tracing::debug!("finished writing file {file_path:?}");
 
         drop(writer);
 
@@ -499,7 +499,7 @@ impl<
 
     fn try_read_chunk(&self, chunk_buffer: &mut [u8], depth: usize, chunk_idx: usize) -> bool {
         let file_path = self.settings.chunk_file_path(depth, chunk_idx);
-        let Ok(mut file) = File::open(file_path) else {
+        let Ok(mut file) = File::open(&file_path) else {
             return false;
         };
 
@@ -508,7 +508,9 @@ impl<
         let actual_size = file.metadata().unwrap().len();
         assert_eq!(expected_size, actual_size as usize);
 
+        tracing::debug!("reading file {file_path:?}");
         file.read_exact(chunk_buffer).unwrap();
+        tracing::debug!("finished reading file {file_path:?}");
 
         true
     }
@@ -524,14 +526,16 @@ impl<
             return false;
         }
 
-        let mut file = File::open(file_path).unwrap();
+        let mut file = File::open(&file_path).unwrap();
 
         // Check that the file size is correct
         let expected_size = self.settings.chunk_size_bytes;
         let actual_size = file.metadata().unwrap().len();
         assert_eq!(expected_size, actual_size as usize);
 
+        tracing::debug!("reading file {file_path:?}");
         file.read_exact(update_buffer).unwrap();
+        tracing::debug!("finished reading file {file_path:?}");
 
         true
     }
@@ -544,7 +548,10 @@ impl<
         let file_path_tmp = dir_path.join(format!("update-chunk-{chunk_idx}.dat.tmp"));
         let mut file = File::create(&file_path_tmp).unwrap();
 
+        tracing::debug!("writing file {file_path_tmp:?}");
         file.write_all(update_buffer).unwrap();
+        tracing::debug!("finished writing file {file_path_tmp:?}");
+
         drop(file);
 
         let file_path = self.settings.update_array_file_path(depth, chunk_idx);
@@ -573,7 +580,10 @@ impl<
         let file_path_tmp = dir_path.join(format!("chunk-{chunk_idx}.dat.tmp"));
         let mut file = File::create(&file_path_tmp).unwrap();
 
+        tracing::debug!("writing file {file_path_tmp:?}");
         file.write_all(chunk_buffer).unwrap();
+        tracing::debug!("finished writing file {file_path_tmp:?}");
+
         drop(file);
 
         let file_path = self.settings.chunk_file_path(depth, chunk_idx);
@@ -654,7 +664,10 @@ impl<
                 // running and need to re-read all the update files
                 ext == Some("dat") || ext == Some("used")
             }) {
+                tracing::debug!("reading file {file_path:?}");
                 let bytes = std::fs::read(&file_path).unwrap();
+                tracing::debug!("finished reading file {file_path:?}");
+
                 assert_eq!(bytes.len() % 4, 0);
 
                 // Group the bytes into groups of 4
@@ -760,7 +773,10 @@ impl<
             };
 
             for file_path in read_dir.flatten().map(|entry| entry.path()) {
+                tracing::debug!("reading file {file_path:?}");
                 let bytes = std::fs::read(&file_path).unwrap();
+                tracing::debug!("finished reading file {file_path:?}");
+
                 assert_eq!(bytes.len() % 4, 0);
 
                 // Group the bytes into groups of 4
@@ -818,7 +834,9 @@ impl<
         let file_len = file_path.metadata().unwrap().len() as usize;
         assert_eq!(file_len, self.settings.chunk_size_bytes);
 
+        tracing::debug!("reading file {file_path:?}");
         let update_array_bytes = std::fs::read(&file_path).unwrap();
+        tracing::debug!("finished reading file {file_path:?}");
 
         for (byte_idx, &update_byte) in update_array_bytes.iter().enumerate() {
             for bit_idx in 0..8 {
