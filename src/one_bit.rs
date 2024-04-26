@@ -15,7 +15,7 @@ use crate::callback::BfsCallback;
 pub struct BfsSettingsBuilder {
     threads: usize,
     chunk_size_bytes: Option<usize>,
-    update_set_capacity: Option<usize>,
+    update_capacity: Option<usize>,
     capacity_check_frequency: Option<usize>,
     initial_states: Option<Vec<u64>>,
     state_size: Option<u64>,
@@ -36,7 +36,7 @@ impl BfsSettingsBuilder {
         Self {
             threads: 1,
             chunk_size_bytes: None,
-            update_set_capacity: None,
+            update_capacity: None,
             capacity_check_frequency: None,
             initial_states: None,
             state_size: None,
@@ -60,8 +60,8 @@ impl BfsSettingsBuilder {
         self
     }
 
-    pub fn update_set_capacity(mut self, update_set_capacity: usize) -> Self {
-        self.update_set_capacity = Some(update_set_capacity);
+    pub fn update_capacity(mut self, update_capacity: usize) -> Self {
+        self.update_capacity = Some(update_capacity);
         self
     }
 
@@ -114,7 +114,7 @@ impl BfsSettingsBuilder {
         Some(BfsSettings {
             threads: self.threads,
             chunk_size_bytes: self.chunk_size_bytes?,
-            update_set_capacity: self.update_set_capacity?,
+            update_capacity: self.update_capacity?,
             capacity_check_frequency: self.capacity_check_frequency?,
             initial_states: self.initial_states?,
             state_size: self.state_size?,
@@ -183,7 +183,7 @@ impl ChunkBufferList {
 pub struct BfsSettings {
     threads: usize,
     chunk_size_bytes: usize,
-    update_set_capacity: usize,
+    update_capacity: usize,
     capacity_check_frequency: usize,
     initial_states: Vec<u64>,
     state_size: u64,
@@ -322,7 +322,7 @@ impl<'a> UpdateFileManager<'a> {
 
     fn write_update_file(
         &self,
-        update_set: &mut HashSet<u32>,
+        updates: &mut Vec<u32>,
         depth: usize,
         updated_chunk_idx: usize,
         from_chunk_idx: usize,
@@ -344,9 +344,9 @@ impl<'a> UpdateFileManager<'a> {
         let file = File::create(&file_path_tmp).unwrap();
         let mut writer = BufWriter::with_capacity(self.settings.buf_io_capacity, file);
 
-        let bytes_to_write = update_set.len() as u64 * 4;
+        let bytes_to_write = updates.len() as u64 * 4;
 
-        for val in update_set.drain() {
+        for &val in &*updates {
             if writer.write(&val.to_le_bytes()).unwrap() != 4 {
                 panic!("failed to write to update file");
             }
@@ -681,19 +681,15 @@ impl<
     ) -> u64 {
         let mut new_positions = 0;
 
-        let mut update_sets = vec![
-            HashSet::<u32, CityHasher>::with_capacity_and_hasher(
-                self.settings.update_set_capacity,
-                CityHasher::default()
-            );
-            self.settings.num_array_chunks()
-        ];
+        let mut updates = (0..self.settings.num_array_chunks())
+            .map(|_| Vec::with_capacity(self.settings.update_capacity))
+            .collect::<Vec<_>>();
 
         let mut callback = self.callback.clone();
 
         new_positions += self.update_and_expand_from_update_files(
             chunk_buffer,
-            &mut update_sets,
+            &mut updates,
             &mut callback,
             depth,
             chunk_idx,
@@ -701,7 +697,7 @@ impl<
 
         new_positions += self.update_and_expand_from_update_array(
             chunk_buffer,
-            &mut update_sets,
+            &mut updates,
             &mut callback,
             depth,
             chunk_idx,
@@ -710,34 +706,29 @@ impl<
         callback.end_of_chunk(depth + 1, chunk_idx);
 
         // Write remaining update files
-        for (idx, set) in update_sets
+        for (idx, upd) in updates
             .iter_mut()
             .enumerate()
-            .filter(|(_, set)| !set.is_empty())
+            .filter(|(_, upd)| !upd.is_empty())
         {
             self.update_file_manager
-                .write_update_file(set, depth + 2, idx, chunk_idx);
+                .write_update_file(upd, depth + 2, idx, chunk_idx);
         }
 
         new_positions
     }
 
-    fn check_update_set_capacity(
-        &self,
-        update_sets: &mut [HashSet<u32>],
-        depth: usize,
-        chunk_idx: usize,
-    ) {
-        // Check if any of the update sets may go over capacity
+    fn check_update_vec_capacity(&self, updates: &mut [Vec<u32>], depth: usize, chunk_idx: usize) {
+        // Check if any of the update vecs may go over capacity
         let max_new_nodes = self.settings.capacity_check_frequency * EXPANSION_NODES;
 
-        for (idx, set) in update_sets.iter_mut().enumerate() {
-            if set.len() + max_new_nodes > set.capacity() {
+        for (idx, upd) in updates.iter_mut().enumerate() {
+            if upd.len() + max_new_nodes > upd.capacity() {
                 // Possible to reach capacity on the next block of expansions, so
                 // write update file to disk
                 self.update_file_manager
-                    .write_update_file(set, depth, idx, chunk_idx);
-                set.clear();
+                    .write_update_file(upd, depth, idx, chunk_idx);
+                upd.clear();
             }
         }
     }
@@ -745,7 +736,7 @@ impl<
     fn update_and_expand_from_update_files(
         &self,
         chunk_buffer: &mut [u8],
-        update_sets: &mut [HashSet<u32>],
+        updates: &mut [Vec<u32>],
         callback: &mut Callback,
         depth: usize,
         chunk_idx: usize,
@@ -790,7 +781,7 @@ impl<
                         callback.new_state(depth + 1, encoded);
 
                         if new_positions as usize % self.settings.capacity_check_frequency == 0 {
-                            self.check_update_set_capacity(update_sets, depth + 2, chunk_idx);
+                            self.check_update_vec_capacity(updates, depth + 2, chunk_idx);
                         }
 
                         // Expand the node
@@ -798,7 +789,7 @@ impl<
 
                         for node in expanded {
                             let (idx, offset) = self.node_to_chunk_coords(node);
-                            update_sets[idx].insert(offset);
+                            updates[idx].push(offset);
                         }
                     }
 
@@ -815,7 +806,7 @@ impl<
     fn update_and_expand_from_update_array(
         &self,
         chunk_buffer: &mut [u8],
-        update_sets: &mut [HashSet<u32>],
+        updates: &mut [Vec<u32>],
         callback: &mut Callback,
         depth: usize,
         chunk_idx: usize,
@@ -857,7 +848,7 @@ impl<
                     callback.new_state(depth + 1, encoded);
 
                     if new_positions as usize % self.settings.capacity_check_frequency == 0 {
-                        self.check_update_set_capacity(update_sets, depth + 2, chunk_idx);
+                        self.check_update_vec_capacity(updates, depth + 2, chunk_idx);
                     }
 
                     // Expand the node
@@ -866,7 +857,7 @@ impl<
 
                     for node in expanded {
                         let (idx, offset) = self.node_to_chunk_coords(node);
-                        update_sets[idx].insert(offset);
+                        updates[idx].push(offset);
                     }
                 }
             }
