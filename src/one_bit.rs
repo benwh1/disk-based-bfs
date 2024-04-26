@@ -645,22 +645,17 @@ impl<
                 // running and need to re-read all the update files
                 ext == Some("dat") || ext == Some("used")
             }) {
-                let file = File::open(&file_path).unwrap();
-                let mut reader = BufReader::with_capacity(self.settings.buf_io_capacity, file);
+                let bytes = std::fs::read(&file_path).unwrap();
+                assert_eq!(bytes.len() % 4, 0);
 
-                let mut buf = [0u8; 4];
-
-                while let Ok(bytes_read) = reader.read(&mut buf) {
-                    if bytes_read == 0 {
-                        break;
-                    }
-
-                    let chunk_offset = u32::from_le_bytes(buf);
+                // Group the bytes into groups of 4
+                for chunk_offset in bytes
+                    .array_chunks()
+                    .map(|&chunk: &[u8; 4]| u32::from_le_bytes(chunk))
+                {
                     let (byte_idx, bit_idx) = self.chunk_offset_to_bit_coords(chunk_offset);
                     update_buffer[byte_idx] |= 1 << bit_idx;
                 }
-
-                drop(reader);
 
                 // Rename the file to mark it as used
                 let file_path_used = file_path.with_extension("used");
@@ -756,20 +751,14 @@ impl<
             };
 
             for file_path in read_dir.flatten().map(|entry| entry.path()) {
-                let file = File::open(file_path).unwrap();
-                let expected_entries = file.metadata().unwrap().len() / 4;
-                let mut reader = BufReader::with_capacity(self.settings.buf_io_capacity, file);
+                let bytes = std::fs::read(&file_path).unwrap();
+                assert_eq!(bytes.len() % 4, 0);
 
-                // Read 4 bytes at a time, and update the current chunk
-                let mut buf = [0u8; 4];
-                let mut entries = 0;
-
-                while let Ok(bytes_read) = reader.read(&mut buf) {
-                    if bytes_read == 0 {
-                        break;
-                    }
-
-                    let chunk_offset = u32::from_le_bytes(buf);
+                // Group the bytes into groups of 4
+                for chunk_offset in bytes
+                    .array_chunks()
+                    .map(|&chunk: &[u8; 4]| u32::from_le_bytes(chunk))
+                {
                     let (byte_idx, bit_idx) = self.chunk_offset_to_bit_coords(chunk_offset);
                     let byte = chunk_buffer[byte_idx];
 
@@ -792,11 +781,7 @@ impl<
                             updates[idx].push(offset);
                         }
                     }
-
-                    entries += 1;
                 }
-
-                assert_eq!(entries, expected_entries);
             }
         }
 

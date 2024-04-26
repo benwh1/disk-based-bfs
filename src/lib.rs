@@ -1,3 +1,4 @@
+#![feature(array_chunks)]
 #![deny(clippy::use_self)]
 #![deny(clippy::if_not_else)]
 #![deny(clippy::inconsistent_struct_constructor)]
