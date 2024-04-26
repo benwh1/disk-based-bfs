@@ -3,7 +3,7 @@ use std::{
     fs::File,
     io::{BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Condvar, Mutex, RwLock},
+    sync::{Arc, Condvar, Mutex, MutexGuard, RwLock},
 };
 
 use cityhasher::{CityHasher, HashSet};
@@ -229,16 +229,6 @@ impl BfsSettings {
             .join(format!("update-chunk-{chunk_idx}"))
     }
 
-    fn update_chunk_from_chunk_dir_path(
-        &self,
-        depth: usize,
-        updated_chunk_idx: usize,
-        from_chunk_idx: usize,
-    ) -> PathBuf {
-        self.update_chunk_dir_path(depth, updated_chunk_idx)
-            .join(format!("from-chunk-{from_chunk_idx}"))
-    }
-
     fn chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.root_dir(chunk_idx)
             .join("array")
@@ -273,18 +263,29 @@ impl BfsSettings {
     }
 }
 
-struct UpdateFileManager<'a> {
+struct UpdateBlock {
+    depth: usize,
+    chunk_idx: usize,
+    updates: Vec<u32>,
+}
+
+struct UpdateManager<'a> {
     settings: &'a BfsSettings,
     sizes: RwLock<HashMap<usize, Vec<u64>>>,
     size_file_lock: Mutex<()>,
+    updates: Mutex<Vec<Option<UpdateBlock>>>,
 }
 
-impl<'a> UpdateFileManager<'a> {
+impl<'a> UpdateManager<'a> {
     fn new(settings: &'a BfsSettings) -> Self {
+        let num_blocks = settings.threads * settings.num_array_chunks();
+        let updates = (0..num_blocks).map(|_| None).collect();
+
         Self {
             settings,
             sizes: RwLock::new(HashMap::new()),
             size_file_lock: Mutex::new(()),
+            updates: Mutex::new(updates),
         }
     }
 
@@ -320,48 +321,100 @@ impl<'a> UpdateFileManager<'a> {
         *lock = hashmap;
     }
 
-    fn write_update_file(
+    fn put(&self, update_block: UpdateBlock) {
+        let mut updates_lock = self.updates.lock().unwrap();
+        if let Some(block) = updates_lock.iter_mut().find(|block| block.is_none()) {
+            block.replace(update_block);
+        } else {
+            self.flush_locked_and_put(updates_lock, Some(update_block));
+        }
+    }
+
+    fn flush(&self) {
+        let updates_lock = self.updates.lock().unwrap();
+        self.flush_locked_and_put(updates_lock, None);
+    }
+
+    /// Flushes the updates to disk and inserts a new update block into the list, if given
+    fn flush_locked_and_put(
         &self,
-        updates: &mut Vec<u32>,
-        depth: usize,
-        updated_chunk_idx: usize,
-        from_chunk_idx: usize,
+        mut updates_lock: MutexGuard<Vec<Option<UpdateBlock>>>,
+        update_block: Option<UpdateBlock>,
     ) {
-        let dir_path = self.settings.update_chunk_from_chunk_dir_path(
-            depth,
-            updated_chunk_idx,
-            from_chunk_idx,
-        );
+        let mut bytes_to_write = HashMap::new();
 
-        std::fs::create_dir_all(&dir_path).unwrap();
+        // Sort the updates so that all the blocks that belong in the same file are consecutive,
+        // so that we can use `chunk_by_mut` to group them together
+        updates_lock.sort_unstable_by_key(|block| {
+            block.as_ref().map(|block| (block.depth, block.chunk_idx))
+        });
 
-        let mut rng = rand::thread_rng();
-        let file_name = Alphanumeric.sample_string(&mut rng, 16);
-        let mut file_path = dir_path.join(file_name);
-        file_path.set_extension("dat");
-
-        let file_path_tmp = file_path.with_extension("tmp");
-        let file = File::create(&file_path_tmp).unwrap();
-        let mut writer = BufWriter::with_capacity(self.settings.buf_io_capacity, file);
-
-        let bytes_to_write = updates.len() as u64 * 4;
-
-        for &val in &*updates {
-            if writer.write(&val.to_le_bytes()).unwrap() != 4 {
-                panic!("failed to write to update file");
+        for chunk in updates_lock.chunk_by_mut(|b1, b2| {
+            let x = b1.as_ref().map(|block| (block.depth, block.chunk_idx));
+            let y = b2.as_ref().map(|block| (block.depth, block.chunk_idx));
+            x == y
+        }) {
+            // If we are flushing at the end of an iteration, it's possible that not all of the
+            // blocks have been filled, so we need to skip over the empty ones (which will all be in
+            // one chunk)
+            if chunk[0].is_none() {
+                continue;
             }
+
+            let depth = chunk[0].as_ref().unwrap().depth;
+            let chunk_idx = chunk[0].as_ref().unwrap().chunk_idx;
+
+            let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
+            std::fs::create_dir_all(&dir_path).unwrap();
+
+            let mut rng = rand::thread_rng();
+            let file_name = Alphanumeric.sample_string(&mut rng, 16);
+            let mut file_path = dir_path.join(file_name);
+            file_path.set_extension("dat");
+
+            let file_path_tmp = file_path.with_extension("tmp");
+            let file = File::create(&file_path_tmp).unwrap();
+            let mut writer = BufWriter::with_capacity(self.settings.buf_io_capacity, file);
+
+            // Write all the blocks in the chunk to a single big update file
+            for block in chunk.iter_mut().map(|block| block.take().unwrap()) {
+                let updates = block.updates;
+
+                let block_bytes = updates.len() as u64 * 4;
+                bytes_to_write
+                    .entry((depth, chunk_idx))
+                    .and_modify(|val| *val += block_bytes)
+                    .or_insert(block_bytes);
+
+                for val in updates {
+                    if writer.write(&val.to_le_bytes()).unwrap() != 4 {
+                        panic!("failed to write to update file");
+                    }
+                }
+            }
+
+            drop(writer);
+
+            std::fs::rename(file_path_tmp, file_path).unwrap();
         }
 
-        drop(writer);
+        // Insert the new block, if there is one
+        if let Some(update_block) = update_block {
+            updates_lock[0].replace(update_block);
+        }
 
-        let mut lock = self.sizes.write().unwrap();
-        let entry = lock
-            .entry(depth)
-            .or_insert_with(|| vec![0; self.settings.num_array_chunks()]);
-        entry[updated_chunk_idx] += bytes_to_write;
-        drop(lock);
+        drop(updates_lock);
 
-        std::fs::rename(file_path_tmp, file_path).unwrap();
+        let mut sizes_lock = self.sizes.write().unwrap();
+        for ((depth, chunk_idx), bytes) in bytes_to_write {
+            sizes_lock
+                .entry(depth)
+                .and_modify(|entry| entry[chunk_idx] += bytes)
+                .or_insert_with(|| vec![0; self.settings.num_array_chunks()]);
+        }
+        drop(sizes_lock);
+
+        self.write_sizes_to_disk();
     }
 
     fn delete_update_files(&self, depth: usize, chunk_idx: usize) {
@@ -380,23 +433,18 @@ impl<'a> UpdateFileManager<'a> {
     fn delete_used_update_files(&self, depth: usize, chunk_idx: usize) {
         let mut bytes_deleted = 0;
 
-        for from_chunk_idx in 0..self.settings.num_array_chunks() {
-            let dir_path =
-                self.settings
-                    .update_chunk_from_chunk_dir_path(depth, chunk_idx, from_chunk_idx);
+        let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
+        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
+            return;
+        };
 
-            let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
-                continue;
-            };
-
-            for file_path in read_dir
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("used"))
-            {
-                bytes_deleted += file_path.metadata().unwrap().len();
-                std::fs::remove_file(file_path).unwrap();
-            }
+        for file_path in read_dir
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("used"))
+        {
+            bytes_deleted += file_path.metadata().unwrap().len();
+            std::fs::remove_file(file_path).unwrap();
         }
 
         let mut lock = self.sizes.write().unwrap();
@@ -420,7 +468,7 @@ pub struct Bfs<
     expander: Expander,
     callback: Callback,
     chunk_buffers: ChunkBufferList,
-    update_file_manager: UpdateFileManager<'a>,
+    update_file_manager: UpdateManager<'a>,
 }
 
 impl<
@@ -432,7 +480,7 @@ impl<
 {
     pub fn new(settings: &'a BfsSettings, expander: Expander, callback: Callback) -> Self {
         let chunk_buffers = ChunkBufferList::new_empty(settings.threads);
-        let update_file_manager = UpdateFileManager::new(settings);
+        let update_file_manager = UpdateManager::new(settings);
 
         Self {
             settings,
@@ -630,37 +678,32 @@ impl<
             update_buffer.fill(0);
         }
 
-        for from_chunk_idx in 0..self.settings.num_array_chunks() {
-            let dir_path =
-                self.settings
-                    .update_chunk_from_chunk_dir_path(depth, chunk_idx, from_chunk_idx);
+        let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
+        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
+            return;
+        };
 
-            let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
-                continue;
-            };
+        for file_path in read_dir.flatten().map(|entry| entry.path()).filter(|path| {
+            let ext = path.extension().and_then(|ext| ext.to_str());
+            // Look for "used" as well, in case we restart the program while this loop is
+            // running and need to re-read all the update files
+            ext == Some("dat") || ext == Some("used")
+        }) {
+            let bytes = std::fs::read(&file_path).unwrap();
+            assert_eq!(bytes.len() % 4, 0);
 
-            for file_path in read_dir.flatten().map(|entry| entry.path()).filter(|path| {
-                let ext = path.extension().and_then(|ext| ext.to_str());
-                // Look for "used" as well, in case we restart the program while this loop is
-                // running and need to re-read all the update files
-                ext == Some("dat") || ext == Some("used")
-            }) {
-                let bytes = std::fs::read(&file_path).unwrap();
-                assert_eq!(bytes.len() % 4, 0);
-
-                // Group the bytes into groups of 4
-                for chunk_offset in bytes
-                    .array_chunks()
-                    .map(|&chunk: &[u8; 4]| u32::from_le_bytes(chunk))
-                {
-                    let (byte_idx, bit_idx) = self.chunk_offset_to_bit_coords(chunk_offset);
-                    update_buffer[byte_idx] |= 1 << bit_idx;
-                }
-
-                // Rename the file to mark it as used
-                let file_path_used = file_path.with_extension("used");
-                std::fs::rename(file_path, file_path_used).unwrap();
+            // Group the bytes into groups of 4
+            for chunk_offset in bytes
+                .array_chunks()
+                .map(|&chunk: &[u8; 4]| u32::from_le_bytes(chunk))
+            {
+                let (byte_idx, bit_idx) = self.chunk_offset_to_bit_coords(chunk_offset);
+                update_buffer[byte_idx] |= 1 << bit_idx;
             }
+
+            // Rename the file to mark it as used
+            let file_path_used = file_path.with_extension("used");
+            std::fs::rename(file_path, file_path_used).unwrap();
         }
 
         self.write_update_array(update_buffer, depth, chunk_idx);
@@ -706,14 +749,18 @@ impl<
             .enumerate()
             .filter(|(_, upd)| !upd.is_empty())
         {
-            self.update_file_manager
-                .write_update_file(upd, depth + 2, idx, chunk_idx);
+            let block = UpdateBlock {
+                depth: depth + 2,
+                chunk_idx: idx,
+                updates: std::mem::replace(upd, Vec::with_capacity(self.settings.update_capacity)),
+            };
+            self.update_file_manager.put(block);
         }
 
         new_positions
     }
 
-    fn check_update_vec_capacity(&self, updates: &mut [Vec<u32>], depth: usize, chunk_idx: usize) {
+    fn check_update_vec_capacity(&self, updates: &mut [Vec<u32>], depth: usize) {
         // Check if any of the update vecs may go over capacity
         let max_new_nodes = self.settings.capacity_check_frequency * EXPANSION_NODES;
 
@@ -721,9 +768,15 @@ impl<
             if upd.len() + max_new_nodes > upd.capacity() {
                 // Possible to reach capacity on the next block of expansions, so
                 // write update file to disk
-                self.update_file_manager
-                    .write_update_file(upd, depth, idx, chunk_idx);
-                upd.clear();
+                let block = UpdateBlock {
+                    depth: depth,
+                    chunk_idx: idx,
+                    updates: std::mem::replace(
+                        upd,
+                        Vec::with_capacity(self.settings.update_capacity),
+                    ),
+                };
+                self.update_file_manager.put(block);
             }
         }
     }
@@ -741,45 +794,41 @@ impl<
         let mut expander = self.expander.clone();
         let mut expanded = [0u64; EXPANSION_NODES];
 
-        for i in 0..self.settings.num_array_chunks() {
-            let dir_path = self
-                .settings
-                .update_chunk_from_chunk_dir_path(depth + 1, chunk_idx, i);
+        let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
+        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
+            // No update files, so nothing to do
+            return 0;
+        };
 
-            let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
-                continue;
-            };
+        for file_path in read_dir.flatten().map(|entry| entry.path()) {
+            let bytes = std::fs::read(&file_path).unwrap();
+            assert_eq!(bytes.len() % 4, 0);
 
-            for file_path in read_dir.flatten().map(|entry| entry.path()) {
-                let bytes = std::fs::read(&file_path).unwrap();
-                assert_eq!(bytes.len() % 4, 0);
+            // Group the bytes into groups of 4
+            for chunk_offset in bytes
+                .array_chunks()
+                .map(|&chunk: &[u8; 4]| u32::from_le_bytes(chunk))
+            {
+                let (byte_idx, bit_idx) = self.chunk_offset_to_bit_coords(chunk_offset);
+                let byte = chunk_buffer[byte_idx];
 
-                // Group the bytes into groups of 4
-                for chunk_offset in bytes
-                    .array_chunks()
-                    .map(|&chunk: &[u8; 4]| u32::from_le_bytes(chunk))
-                {
-                    let (byte_idx, bit_idx) = self.chunk_offset_to_bit_coords(chunk_offset);
-                    let byte = chunk_buffer[byte_idx];
+                if (byte >> bit_idx) & 1 == 0 {
+                    chunk_buffer[byte_idx] |= 1 << bit_idx;
+                    new_positions += 1;
 
-                    if (byte >> bit_idx) & 1 == 0 {
-                        chunk_buffer[byte_idx] |= 1 << bit_idx;
-                        new_positions += 1;
+                    let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
+                    callback.new_state(depth + 1, encoded);
 
-                        let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
-                        callback.new_state(depth + 1, encoded);
+                    if new_positions as usize % self.settings.capacity_check_frequency == 0 {
+                        self.check_update_vec_capacity(updates, depth + 2);
+                    }
 
-                        if new_positions as usize % self.settings.capacity_check_frequency == 0 {
-                            self.check_update_vec_capacity(updates, depth + 2, chunk_idx);
-                        }
+                    // Expand the node
+                    expander(encoded, &mut expanded);
 
-                        // Expand the node
-                        expander(encoded, &mut expanded);
-
-                        for node in expanded {
-                            let (idx, offset) = self.node_to_chunk_coords(node);
-                            updates[idx].push(offset);
-                        }
+                    for node in expanded {
+                        let (idx, offset) = self.node_to_chunk_coords(node);
+                        updates[idx].push(offset);
                     }
                 }
             }
@@ -833,7 +882,7 @@ impl<
                     callback.new_state(depth + 1, encoded);
 
                     if new_positions as usize % self.settings.capacity_check_frequency == 0 {
-                        self.check_update_vec_capacity(updates, depth + 2, chunk_idx);
+                        self.check_update_vec_capacity(updates, depth + 2);
                     }
 
                     // Expand the node
@@ -994,11 +1043,14 @@ impl<
         // Write values from `next` to initial update files
         let mut update_files = (0..self.settings.num_array_chunks())
             .map(|chunk_idx| {
-                let dir_path =
-                    self.settings
-                        .update_chunk_from_chunk_dir_path(depth + 1, chunk_idx, 0);
+                let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
                 std::fs::create_dir_all(&dir_path).unwrap();
-                let file_path = dir_path.join("update.dat");
+
+                let mut rng = rand::thread_rng();
+                let file_name = Alphanumeric.sample_string(&mut rng, 16);
+                let mut file_path = dir_path.join(file_name);
+                file_path.set_extension("dat");
+
                 let file = File::create(&file_path).unwrap();
                 BufWriter::with_capacity(self.settings.buf_io_capacity, file)
             })
@@ -1329,6 +1381,9 @@ impl<
 
             threads.into_iter().for_each(|t| t.join().unwrap());
         });
+
+        tracing::info!("writing remaining update files");
+        self.update_file_manager.flush();
 
         let new = *new_states.lock().unwrap();
         tracing::info!("depth {} new {new}", depth + 1);
