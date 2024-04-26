@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufReader, BufWriter, Read, Write},
+    io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex, RwLock},
 };
@@ -815,23 +815,12 @@ impl<
             return 0;
         }
 
-        let file = File::open(file_path).unwrap();
-        let file_len = file.metadata().unwrap().len() as usize;
+        let file_len = file_path.metadata().unwrap().len() as usize;
         assert_eq!(file_len, self.settings.chunk_size_bytes);
 
-        let mut reader = BufReader::with_capacity(self.settings.buf_io_capacity, file);
+        let update_array_bytes = std::fs::read(&file_path).unwrap();
 
-        let mut buf = [0];
-        let mut entries = 0;
-
-        while let Ok(bytes_read) = reader.read(&mut buf) {
-            if bytes_read == 0 {
-                break;
-            }
-
-            let update_byte = buf[0];
-            let byte_idx = entries;
-
+        for (byte_idx, &update_byte) in update_array_bytes.iter().enumerate() {
             for bit_idx in 0..8 {
                 let chunk_byte = chunk_buffer[byte_idx];
                 if (update_byte >> bit_idx) & 1 == 1 && (chunk_byte >> bit_idx) & 1 == 0 {
@@ -855,11 +844,7 @@ impl<
                     }
                 }
             }
-
-            entries += 1;
         }
-
-        assert_eq!(entries, file_len);
 
         new_positions
     }
