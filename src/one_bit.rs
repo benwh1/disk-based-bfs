@@ -15,7 +15,7 @@ use crate::callback::BfsCallback;
 pub struct BfsSettingsBuilder {
     threads: usize,
     chunk_size_bytes: Option<usize>,
-    update_capacity: Option<usize>,
+    update_memory: Option<usize>,
     capacity_check_frequency: Option<usize>,
     initial_states: Option<Vec<u64>>,
     state_size: Option<u64>,
@@ -36,7 +36,7 @@ impl BfsSettingsBuilder {
         Self {
             threads: 1,
             chunk_size_bytes: None,
-            update_capacity: None,
+            update_memory: None,
             capacity_check_frequency: None,
             initial_states: None,
             state_size: None,
@@ -60,8 +60,8 @@ impl BfsSettingsBuilder {
         self
     }
 
-    pub fn update_capacity(mut self, update_capacity: usize) -> Self {
-        self.update_capacity = Some(update_capacity);
+    pub fn update_memory(mut self, update_memory: usize) -> Self {
+        self.update_memory = Some(update_memory);
         self
     }
 
@@ -114,7 +114,7 @@ impl BfsSettingsBuilder {
         Some(BfsSettings {
             threads: self.threads,
             chunk_size_bytes: self.chunk_size_bytes?,
-            update_capacity: self.update_capacity?,
+            update_memory: self.update_memory?,
             capacity_check_frequency: self.capacity_check_frequency?,
             initial_states: self.initial_states?,
             state_size: self.state_size?,
@@ -183,7 +183,7 @@ impl ChunkBufferList {
 pub struct BfsSettings {
     threads: usize,
     chunk_size_bytes: usize,
-    update_capacity: usize,
+    update_memory: usize,
     capacity_check_frequency: usize,
     initial_states: Vec<u64>,
     state_size: u64,
@@ -204,6 +204,15 @@ impl BfsSettings {
 
     fn states_per_chunk(&self) -> usize {
         self.chunk_size_bytes * 8
+    }
+
+    /// `self.update_memory` is the total amount of space we use for storing all updates across all
+    /// chunks and all threads, so this is the total size of each small `Vec` of updates.
+    fn update_capacity_per_vec(&self) -> usize {
+        // We have one vec per chunk per thread in `update_and_expand_chunk`, and another vec per
+        // chunk per thread in `UpdateManager`, and each entry is a `u32`.
+        self.update_memory
+            / (self.threads * self.num_array_chunks() * 2 * std::mem::size_of::<u32>())
     }
 
     fn root_dir(&self, chunk_idx: usize) -> &Path {
@@ -677,7 +686,7 @@ impl<
         let mut new_positions = 0;
 
         let mut updates = (0..self.settings.num_array_chunks())
-            .map(|_| Vec::with_capacity(self.settings.update_capacity))
+            .map(|_| Vec::with_capacity(self.settings.update_capacity_per_vec()))
             .collect::<Vec<_>>();
 
         let mut callback = self.callback.clone();
