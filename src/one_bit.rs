@@ -312,7 +312,11 @@ impl<'a> UpdateFileManager<'a> {
         let file_path = self.settings.update_files_size_file_path();
         let file_path_tmp = file_path.with_extension("tmp");
 
-        std::fs::write(&file_path_tmp, &str).unwrap();
+        let mut file = File::create(&file_path_tmp).unwrap();
+        file.write_all(str.as_ref()).unwrap();
+
+        drop(file);
+
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
 
@@ -491,8 +495,14 @@ impl<
 
     fn write_state(&self, state: State) {
         let str = serde_json::to_string(&state).unwrap();
+
         let file_path_tmp = self.settings.state_file_path().with_extension("tmp");
-        std::fs::write(&file_path_tmp, &str).unwrap();
+        let mut file = File::create(&file_path_tmp).unwrap();
+
+        file.write_all(str.as_ref()).unwrap();
+
+        drop(file);
+
         let file_path = self.settings.state_file_path();
         std::fs::rename(file_path_tmp, file_path).unwrap();
     }
