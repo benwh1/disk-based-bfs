@@ -7,3 +7,4 @@
 
 pub mod bfs;
 pub mod callback;
+pub mod settings;
