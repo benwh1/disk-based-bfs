@@ -3,7 +3,7 @@ use std::{
     fs::File,
     io::{BufWriter, Read, Write},
     path::PathBuf,
-    sync::{Arc, Condvar, Mutex, MutexGuard, RwLock},
+    sync::{Arc, Condvar, Mutex, RwLock},
 };
 
 use cityhasher::{CityHasher, HashSet};
@@ -66,29 +66,145 @@ impl ChunkBufferList {
     }
 }
 
-struct UpdateBlock {
+struct AvailableUpdateBlock {
+    updates: Vec<u32>,
+}
+
+struct FilledUpdateBlock {
+    updates: Vec<u32>,
     depth: usize,
     chunk_idx: usize,
-    updates: Vec<u32>,
+}
+
+impl AvailableUpdateBlock {
+    fn new(capacity: usize) -> Self {
+        Self {
+            updates: Vec::with_capacity(capacity),
+        }
+    }
+
+    fn into_filled(self, depth: usize, chunk_idx: usize) -> FilledUpdateBlock {
+        FilledUpdateBlock {
+            updates: self.updates,
+            depth,
+            chunk_idx,
+        }
+    }
+
+    fn push(&mut self, update: u32) {
+        self.updates.push(update);
+    }
+}
+
+impl FilledUpdateBlock {
+    fn clear(mut self) -> AvailableUpdateBlock {
+        self.updates.clear();
+
+        AvailableUpdateBlock {
+            updates: self.updates,
+        }
+    }
+}
+
+struct UpdateBlockList<'a> {
+    settings: &'a BfsSettings,
+    available_blocks: Vec<AvailableUpdateBlock>,
+    filled_blocks: Vec<FilledUpdateBlock>,
+}
+
+impl<'a> UpdateBlockList<'a> {
+    fn new(settings: &'a BfsSettings) -> Self {
+        let num_blocks = settings.threads * settings.num_array_chunks();
+        let available_blocks = (0..num_blocks)
+            .map(|_| AvailableUpdateBlock::new(settings.update_capacity_per_vec()))
+            .collect::<Vec<_>>();
+        let filled_blocks = Vec::new();
+
+        Self {
+            settings,
+            available_blocks,
+            filled_blocks,
+        }
+    }
+
+    fn write_all(&mut self) {
+        tracing::info!("writing {} update files", self.filled_blocks.len());
+
+        // Sort the updates so that all the blocks that belong in the same file are consecutive,
+        // so that we can use `chunk_by_mut` to group them together
+        self.filled_blocks
+            .sort_unstable_by_key(|block| (block.depth, block.chunk_idx));
+
+        for chunk in self
+            .filled_blocks
+            .chunk_by_mut(|b1, b2| (b1.depth, b1.chunk_idx) == (b2.depth, b2.chunk_idx))
+        {
+            let depth = chunk[0].depth;
+            let chunk_idx = chunk[0].chunk_idx;
+
+            let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
+            std::fs::create_dir_all(&dir_path).unwrap();
+
+            let mut rng = rand::thread_rng();
+            let file_name = Alphanumeric.sample_string(&mut rng, 16);
+            let mut file_path = dir_path.join(file_name);
+            file_path.set_extension("dat");
+
+            let file_path_tmp = file_path.with_extension("tmp");
+            let file = File::create(&file_path_tmp).unwrap();
+            let mut writer = BufWriter::with_capacity(self.settings.buf_io_capacity, file);
+
+            // Write all the blocks in the chunk to a single big update file
+            for block in chunk {
+                for &val in &block.updates {
+                    if writer.write(&val.to_le_bytes()).unwrap() != 4 {
+                        panic!("failed to write to update file");
+                    }
+                }
+            }
+
+            drop(writer);
+
+            std::fs::rename(file_path_tmp, &file_path).unwrap();
+
+            tracing::debug!("finished writing file {file_path:?}");
+        }
+
+        for block in self.filled_blocks.drain(..) {
+            self.available_blocks.push(block.clear());
+        }
+    }
+
+    fn take(&mut self) -> AvailableUpdateBlock {
+        if let Some(block) = self.available_blocks.pop() {
+            return block;
+        }
+
+        self.write_all();
+
+        // All blocks will be available now
+        self.available_blocks.pop().unwrap()
+    }
+
+    fn put(&mut self, block: FilledUpdateBlock) {
+        self.filled_blocks.push(block);
+    }
 }
 
 struct UpdateManager<'a> {
     settings: &'a BfsSettings,
     sizes: RwLock<HashMap<usize, Vec<u64>>>,
     size_file_lock: Mutex<()>,
-    updates: Mutex<Vec<Option<UpdateBlock>>>,
+    update_blocks: Mutex<UpdateBlockList<'a>>,
 }
 
 impl<'a> UpdateManager<'a> {
     fn new(settings: &'a BfsSettings) -> Self {
-        let num_blocks = settings.threads * settings.num_array_chunks();
-        let updates = (0..num_blocks).map(|_| None).collect();
-
         Self {
             settings,
             sizes: RwLock::new(HashMap::new()),
             size_file_lock: Mutex::new(()),
-            updates: Mutex::new(updates),
+            update_blocks: Mutex::new(UpdateBlockList::new(settings)),
         }
     }
 
@@ -126,100 +242,38 @@ impl<'a> UpdateManager<'a> {
         *lock = hashmap;
     }
 
-    fn put(&self, update_block: UpdateBlock) {
-        let mut updates_lock = self.updates.lock().unwrap();
-        if let Some(block) = updates_lock.iter_mut().find(|block| block.is_none()) {
-            block.replace(update_block);
-        } else {
-            self.flush_locked_and_put(updates_lock, Some(update_block));
+    fn take_n(&self, n: usize) -> Vec<AvailableUpdateBlock> {
+        let mut update_blocks_lock = self.update_blocks.lock().unwrap();
+
+        let mut blocks = Vec::with_capacity(n);
+        for _ in 0..n {
+            blocks.push(update_blocks_lock.take());
         }
+
+        blocks
+    }
+
+    fn put(&self, block: FilledUpdateBlock) {
+        self.update_blocks.lock().unwrap().put(block);
     }
 
     fn flush(&self) {
-        let updates_lock = self.updates.lock().unwrap();
-        self.flush_locked_and_put(updates_lock, None);
-    }
-
-    /// Flushes the updates to disk and inserts a new update block into the list, if given
-    fn flush_locked_and_put(
-        &self,
-        mut updates_lock: MutexGuard<Vec<Option<UpdateBlock>>>,
-        update_block: Option<UpdateBlock>,
-    ) {
-        let mut bytes_to_write = HashMap::new();
-
-        // Sort the updates so that all the blocks that belong in the same file are consecutive,
-        // so that we can use `chunk_by_mut` to group them together
-        updates_lock.sort_unstable_by_key(|block| {
-            block.as_ref().map(|block| (block.depth, block.chunk_idx))
-        });
-
-        for chunk in updates_lock.chunk_by_mut(|b1, b2| {
-            let x = b1.as_ref().map(|block| (block.depth, block.chunk_idx));
-            let y = b2.as_ref().map(|block| (block.depth, block.chunk_idx));
-            x == y
-        }) {
-            // If we are flushing at the end of an iteration, it's possible that not all of the
-            // blocks have been filled, so we need to skip over the empty ones (which will all be in
-            // one chunk)
-            if chunk[0].is_none() {
-                continue;
-            }
-
-            let depth = chunk[0].as_ref().unwrap().depth;
-            let chunk_idx = chunk[0].as_ref().unwrap().chunk_idx;
-
-            let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
-            std::fs::create_dir_all(&dir_path).unwrap();
-
-            let mut rng = rand::thread_rng();
-            let file_name = Alphanumeric.sample_string(&mut rng, 16);
-            let mut file_path = dir_path.join(file_name);
-            file_path.set_extension("dat");
-
-            let file_path_tmp = file_path.with_extension("tmp");
-            let file = File::create(&file_path_tmp).unwrap();
-            let mut writer = BufWriter::with_capacity(self.settings.buf_io_capacity, file);
-
-            // Write all the blocks in the chunk to a single big update file
-            for block in chunk.iter_mut().map(|block| block.take().unwrap()) {
-                let updates = block.updates;
-
-                let block_bytes = updates.len() as u64 * 4;
-                bytes_to_write
-                    .entry((depth, chunk_idx))
-                    .and_modify(|val| *val += block_bytes)
-                    .or_insert(block_bytes);
-
-                for val in updates {
-                    if writer.write(&val.to_le_bytes()).unwrap() != 4 {
-                        panic!("failed to write to update file");
-                    }
-                }
-            }
-
-            drop(writer);
-
-            std::fs::rename(file_path_tmp, &file_path).unwrap();
-
-            tracing::debug!("finished writing file {file_path:?}");
-        }
-
-        // Insert the new block, if there is one
-        if let Some(update_block) = update_block {
-            updates_lock[0].replace(update_block);
-        }
-
-        drop(updates_lock);
-
+        let mut update_blocks_lock = self.update_blocks.lock().unwrap();
         let mut sizes_lock = self.sizes.write().unwrap();
-        for ((depth, chunk_idx), bytes) in bytes_to_write {
+
+        for block in &update_blocks_lock.filled_blocks {
+            let bytes = block.updates.len() as u64 * 4;
             sizes_lock
-                .entry(depth)
-                .and_modify(|entry| entry[chunk_idx] += bytes)
+                .entry(block.depth)
+                .and_modify(|entry| entry[block.chunk_idx] += bytes)
                 .or_insert_with(|| vec![0; self.settings.num_array_chunks()]);
         }
+
         drop(sizes_lock);
+
+        update_blocks_lock.write_all();
+
+        drop(update_blocks_lock);
 
         self.write_sizes_to_disk();
     }
@@ -262,6 +316,17 @@ impl<'a> UpdateManager<'a> {
     fn files_size(&self, depth: usize, chunk_idx: usize) -> u64 {
         let read_lock = self.sizes.read().unwrap();
         read_lock.get(&depth).map_or(0, |sizes| sizes[chunk_idx])
+    }
+
+    fn mark_filled_and_replace(
+        &self,
+        upd: &mut AvailableUpdateBlock,
+        depth: usize,
+        chunk_idx: usize,
+    ) {
+        let new = self.update_blocks.lock().unwrap().take();
+        let old = std::mem::replace(upd, new).into_filled(depth, chunk_idx);
+        self.put(old);
     }
 }
 
@@ -541,10 +606,9 @@ impl<
         chunk_idx: usize,
     ) -> u64 {
         let mut new_positions = 0;
-
-        let mut updates = (0..self.settings.num_array_chunks())
-            .map(|_| Vec::with_capacity(self.settings.update_capacity_per_vec()))
-            .collect::<Vec<_>>();
+        let mut updates = self
+            .update_file_manager
+            .take_n(self.settings.num_array_chunks());
 
         let mut callback = self.callback.clone();
 
@@ -567,42 +631,23 @@ impl<
         callback.end_of_chunk(depth + 1, chunk_idx);
 
         // Write remaining update files
-        for (idx, upd) in updates
-            .iter_mut()
-            .enumerate()
-            .filter(|(_, upd)| !upd.is_empty())
-        {
-            let block = UpdateBlock {
-                depth: depth + 2,
-                chunk_idx: idx,
-                updates: std::mem::replace(
-                    upd,
-                    Vec::with_capacity(self.settings.update_capacity_per_vec()),
-                ),
-            };
-            self.update_file_manager.put(block);
+        for (idx, upd) in updates.into_iter().enumerate() {
+            self.update_file_manager
+                .put(upd.into_filled(depth + 2, idx));
         }
 
         new_positions
     }
 
-    fn check_update_vec_capacity(&self, updates: &mut [Vec<u32>], depth: usize) {
+    fn check_update_vec_capacity(&self, updates: &mut [AvailableUpdateBlock], depth: usize) {
         // Check if any of the update vecs may go over capacity
         let max_new_nodes = self.settings.capacity_check_frequency * EXPANSION_NODES;
 
         for (idx, upd) in updates.iter_mut().enumerate() {
-            if upd.len() + max_new_nodes > upd.capacity() {
-                // Possible to reach capacity on the next block of expansions, so
-                // write update file to disk
-                let block = UpdateBlock {
-                    depth: depth,
-                    chunk_idx: idx,
-                    updates: std::mem::replace(
-                        upd,
-                        Vec::with_capacity(self.settings.update_capacity_per_vec()),
-                    ),
-                };
-                self.update_file_manager.put(block);
+            if upd.updates.len() + max_new_nodes > upd.updates.capacity() {
+                // Possible to reach capacity on the next block of expansions
+                self.update_file_manager
+                    .mark_filled_and_replace(upd, depth, idx);
             }
         }
     }
@@ -610,7 +655,7 @@ impl<
     fn update_and_expand_from_update_files(
         &self,
         chunk_buffer: &mut [u8],
-        updates: &mut [Vec<u32>],
+        updates: &mut [AvailableUpdateBlock],
         callback: &mut Callback,
         depth: usize,
         chunk_idx: usize,
@@ -666,7 +711,7 @@ impl<
     fn update_and_expand_from_update_array(
         &self,
         chunk_buffer: &mut [u8],
-        updates: &mut [Vec<u32>],
+        updates: &mut [AvailableUpdateBlock],
         callback: &mut Callback,
         depth: usize,
         chunk_idx: usize,
