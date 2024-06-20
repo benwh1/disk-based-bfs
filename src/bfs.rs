@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufWriter, Read, Write},
+    io::{BufWriter, Write},
     path::PathBuf,
     sync::{Arc, Condvar, Mutex, RwLock},
 };
@@ -10,7 +10,7 @@ use cityhasher::{CityHasher, HashSet};
 use rand::distributions::{Alphanumeric, DistString};
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{callback::BfsCallback, settings::BfsSettings};
+use crate::{callback::BfsCallback, io::LockedIO, settings::BfsSettings};
 
 pub enum InMemoryBfsResult {
     Complete,
@@ -193,15 +193,17 @@ impl<'a> UpdateBlockList<'a> {
 
 struct UpdateManager<'a> {
     settings: &'a BfsSettings,
+    locked_io: &'a LockedIO,
     sizes: RwLock<HashMap<usize, Vec<u64>>>,
     size_file_lock: Mutex<()>,
     update_blocks: Mutex<UpdateBlockList<'a>>,
 }
 
 impl<'a> UpdateManager<'a> {
-    fn new(settings: &'a BfsSettings) -> Self {
+    fn new(settings: &'a BfsSettings, locked_io: &'a LockedIO) -> Self {
         Self {
             settings,
+            locked_io,
             sizes: RwLock::new(HashMap::new()),
             size_file_lock: Mutex::new(()),
             update_blocks: Mutex::new(UpdateBlockList::new(settings)),
@@ -220,20 +222,14 @@ impl<'a> UpdateManager<'a> {
         let str = serde_json::to_string(&*read_lock).unwrap();
         drop(read_lock);
 
-        let file_path = self.settings.update_files_size_file_path();
-        let file_path_tmp = file_path.with_extension("tmp");
-
-        let mut file = File::create(&file_path_tmp).unwrap();
-        file.write_all(str.as_ref()).unwrap();
-
-        drop(file);
-
-        std::fs::rename(file_path_tmp, file_path).unwrap();
+        let path = self.settings.update_files_size_file_path();
+        self.locked_io.write_file(&path, str.as_ref());
     }
 
     fn try_read_sizes_from_disk(&self) {
-        let file_path = self.settings.update_files_size_file_path();
-        let Ok(str) = std::fs::read_to_string(file_path) else {
+        let path = self.settings.update_files_size_file_path();
+
+        let Some(str) = self.locked_io.try_read_to_string(&path) else {
             return;
         };
         let hashmap = serde_json::from_str(&str).unwrap();
@@ -337,6 +333,7 @@ pub struct Bfs<
     const EXPANSION_NODES: usize,
 > {
     settings: &'a BfsSettings,
+    locked_io: &'a LockedIO,
     expander: Expander,
     callback: Callback,
     chunk_buffers: ChunkBufferList,
@@ -350,12 +347,18 @@ impl<
         const EXPANSION_NODES: usize,
     > Bfs<'a, Expander, Callback, EXPANSION_NODES>
 {
-    pub fn new(settings: &'a BfsSettings, expander: Expander, callback: Callback) -> Self {
+    pub fn new(
+        settings: &'a BfsSettings,
+        locked_io: &'a LockedIO,
+        expander: Expander,
+        callback: Callback,
+    ) -> Self {
         let chunk_buffers = ChunkBufferList::new_empty(settings.threads);
-        let update_file_manager = UpdateManager::new(settings);
+        let update_file_manager = UpdateManager::new(settings, locked_io);
 
         Self {
             settings,
+            locked_io,
             expander,
             callback,
             chunk_buffers,
@@ -365,9 +368,10 @@ impl<
 
     fn read_new_positions_data_file(&self, depth: usize, chunk_idx: usize) -> u64 {
         let file_path = self.settings.new_positions_data_file_path(depth, chunk_idx);
-        let mut file = File::open(file_path).unwrap();
         let mut buf = [0u8; 8];
-        file.read_exact(&mut buf).unwrap();
+
+        self.locked_io.read_file(&file_path, &mut buf);
+
         u64::from_le_bytes(buf)
     }
 
@@ -375,16 +379,8 @@ impl<
         let dir_path = self.settings.new_positions_data_dir_path(depth);
         std::fs::create_dir_all(&dir_path).unwrap();
 
-        let file_path_tmp = self
-            .settings
-            .new_positions_data_file_path(depth, chunk_idx)
-            .with_extension("tmp");
-        let mut file = File::create(&file_path_tmp).unwrap();
-        file.write_all(&new.to_le_bytes()).unwrap();
-        drop(file);
-
         let file_path = self.settings.new_positions_data_file_path(depth, chunk_idx);
-        std::fs::rename(file_path_tmp, file_path).unwrap();
+        self.locked_io.write_file(&file_path, &new.to_le_bytes());
     }
 
     fn delete_new_positions_data_dir(&self, depth: usize) {
@@ -396,38 +392,27 @@ impl<
 
     fn read_state(&self) -> Option<State> {
         let file_path = self.settings.state_file_path();
-        let str = std::fs::read_to_string(file_path).ok()?;
+        let str = self.locked_io.read_to_string(&file_path);
         serde_json::from_str(&str).ok()
     }
 
     fn write_state(&self, state: State) {
         let str = serde_json::to_string(&state).unwrap();
-
-        let file_path_tmp = self.settings.state_file_path().with_extension("tmp");
-        let mut file = File::create(&file_path_tmp).unwrap();
-
-        file.write_all(str.as_ref()).unwrap();
-
-        drop(file);
-
         let file_path = self.settings.state_file_path();
-        std::fs::rename(file_path_tmp, file_path).unwrap();
+        self.locked_io.write_file(&file_path, str.as_ref());
     }
 
     fn try_read_chunk(&self, chunk_buffer: &mut [u8], depth: usize, chunk_idx: usize) -> bool {
         let file_path = self.settings.chunk_file_path(depth, chunk_idx);
-        let Ok(mut file) = File::open(&file_path) else {
+
+        if !self.locked_io.try_read_file(&file_path, chunk_buffer) {
             return false;
-        };
+        }
 
         // Check that the file size is correct
         let expected_size = self.settings.chunk_size_bytes;
-        let actual_size = file.metadata().unwrap().len();
-        assert_eq!(expected_size, actual_size as usize);
-
-        tracing::debug!("reading file {file_path:?}");
-        file.read_exact(chunk_buffer).unwrap();
-        tracing::debug!("finished reading file {file_path:?}");
+        let actual_size = file_path.metadata().unwrap().len() as usize;
+        assert_eq!(expected_size, actual_size);
 
         true
     }
@@ -439,40 +424,25 @@ impl<
         chunk_idx: usize,
     ) -> bool {
         let file_path = self.settings.update_array_file_path(depth, chunk_idx);
-        if !file_path.exists() {
+
+        if !self.locked_io.try_read_file(&file_path, update_buffer) {
             return false;
         }
 
-        let mut file = File::open(&file_path).unwrap();
-
         // Check that the file size is correct
         let expected_size = self.settings.chunk_size_bytes;
-        let actual_size = file.metadata().unwrap().len();
-        assert_eq!(expected_size, actual_size as usize);
-
-        tracing::debug!("reading file {file_path:?}");
-        file.read_exact(update_buffer).unwrap();
-        tracing::debug!("finished reading file {file_path:?}");
+        let actual_size = file_path.metadata().unwrap().len() as usize;
+        assert_eq!(expected_size, actual_size);
 
         true
     }
 
     fn write_update_array(&self, update_buffer: &[u8], depth: usize, chunk_idx: usize) {
         let dir_path = self.settings.update_array_dir_path(depth, chunk_idx);
-
         std::fs::create_dir_all(&dir_path).unwrap();
 
-        let file_path_tmp = dir_path.join(format!("update-chunk-{chunk_idx}.dat.tmp"));
-        let mut file = File::create(&file_path_tmp).unwrap();
-
-        tracing::debug!("writing file {file_path_tmp:?}");
-        file.write_all(update_buffer).unwrap();
-        tracing::debug!("finished writing file {file_path_tmp:?}");
-
-        drop(file);
-
         let file_path = self.settings.update_array_file_path(depth, chunk_idx);
-        std::fs::rename(file_path_tmp, file_path).unwrap();
+        self.locked_io.write_file(&file_path, update_buffer);
     }
 
     fn create_chunk(&self, chunk_buffer: &mut [u8], hashsets: &[&HashSet<u64>], chunk_idx: usize) {
@@ -491,20 +461,10 @@ impl<
 
     fn write_chunk(&self, chunk_buffer: &[u8], depth: usize, chunk_idx: usize) {
         let dir_path = self.settings.chunk_dir_path(depth, chunk_idx);
-
         std::fs::create_dir_all(&dir_path).unwrap();
 
-        let file_path_tmp = dir_path.join(format!("chunk-{chunk_idx}.dat.tmp"));
-        let mut file = File::create(&file_path_tmp).unwrap();
-
-        tracing::debug!("writing file {file_path_tmp:?}");
-        file.write_all(chunk_buffer).unwrap();
-        tracing::debug!("finished writing file {file_path_tmp:?}");
-
-        drop(file);
-
         let file_path = self.settings.chunk_file_path(depth, chunk_idx);
-        std::fs::rename(file_path_tmp, file_path).unwrap();
+        self.locked_io.write_file(&file_path, chunk_buffer);
     }
 
     fn delete_chunk_file(&self, depth: usize, chunk_idx: usize) {
@@ -534,27 +494,17 @@ impl<
         let dir_path = self.exhausted_chunk_dir_path();
         std::fs::create_dir_all(&dir_path).unwrap();
 
-        let file_path_tmp = self
-            .exhausted_chunk_file_path(chunk_idx)
-            .with_extension("tmp");
-        let mut file = File::create(&file_path_tmp).unwrap();
-        file.write_all(&depth.to_le_bytes()).unwrap();
-        drop(file);
-
         let file_path = self.exhausted_chunk_file_path(chunk_idx);
-        std::fs::rename(file_path_tmp, file_path).unwrap();
+        self.locked_io.write_file(&file_path, &depth.to_le_bytes());
     }
 
     fn chunk_exhausted_depth(&self, chunk_idx: usize) -> Option<usize> {
         let file_path = self.exhausted_chunk_file_path(chunk_idx);
+        let mut buf = [0u8; std::mem::size_of::<usize>()];
 
-        if !file_path.exists() {
+        if !self.locked_io.try_read_file(&file_path, &mut buf) {
             return None;
         }
-
-        let mut file = File::open(file_path).unwrap();
-        let mut buf = [0u8; std::mem::size_of::<usize>()];
-        file.read_exact(&mut buf).unwrap();
 
         Some(usize::from_le_bytes(buf))
     }
@@ -577,7 +527,7 @@ impl<
             // running and need to re-read all the update files
             ext == Some("dat") || ext == Some("used")
         }) {
-            let bytes = std::fs::read(&file_path).unwrap();
+            let bytes = self.locked_io.read_to_vec(&file_path);
             assert_eq!(bytes.len() % 4, 0);
 
             // Group the bytes into groups of 4

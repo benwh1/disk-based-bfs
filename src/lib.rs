@@ -7,4 +7,5 @@
 
 pub mod bfs;
 pub mod callback;
+pub mod io;
 pub mod settings;
