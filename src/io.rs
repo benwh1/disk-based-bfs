@@ -22,19 +22,19 @@ impl LockedDisk {
         path.starts_with(&self.disk_path)
     }
 
-    pub fn try_read_file(&self, path: &Path, buf: &mut [u8]) -> bool {
+    pub fn try_read_file(&self, path: &Path, buf: &mut [u8]) -> Option<()> {
         if !self.is_on_disk(path) {
-            return false;
+            return None;
         }
 
-        let _lock = self.lock.lock().unwrap();
+        let _lock = self.lock.lock().expect("failed to acquire lock");
 
         tracing::info!("reading file {path:?}");
 
-        let mut file = File::open(&path).unwrap();
-        file.read_exact(buf).unwrap();
+        let mut file = File::open(&path).ok()?;
+        file.read_exact(buf).ok()?;
 
-        true
+        Some(())
     }
 
     pub fn try_read_to_string(&self, path: &Path) -> Option<String> {
@@ -42,13 +42,13 @@ impl LockedDisk {
             return None;
         }
 
-        let _lock = self.lock.lock().unwrap();
+        let _lock = self.lock.lock().expect("failed to acquire lock");
 
         tracing::info!("reading file {path:?}");
 
-        let mut file = File::open(&path).unwrap();
+        let mut file = File::open(&path).ok()?;
         let mut buf = String::new();
-        file.read_to_string(&mut buf).unwrap();
+        file.read_to_string(&mut buf).ok()?;
 
         Some(buf)
     }
@@ -58,45 +58,45 @@ impl LockedDisk {
             return None;
         }
 
-        let _lock = self.lock.lock().unwrap();
+        let _lock = self.lock.lock().expect("failed to acquire lock");
 
         tracing::info!("reading file {path:?}");
 
         std::fs::read(&path).ok()
     }
 
-    pub fn try_write_file(&self, path: &Path, data: &[u8]) -> bool {
+    pub fn try_write_file(&self, path: &Path, data: &[u8]) -> Option<()> {
         if !self.is_on_disk(path) {
-            return false;
+            return None;
         }
 
-        let _lock = self.lock.lock().unwrap();
+        let _lock = self.lock.lock().expect("failed to acquire lock");
 
         tracing::info!("writing file {path:?}");
 
         let path_tmp = path.with_extension("tmp");
-        let mut file = File::create(&path_tmp).unwrap();
-        file.write_all(&data).unwrap();
+        let mut file = File::create(&path_tmp).ok()?;
+        file.write_all(&data).ok()?;
 
         drop(file);
 
-        std::fs::rename(path_tmp, path).unwrap();
+        std::fs::rename(path_tmp, path).ok()?;
 
-        true
+        Some(())
     }
 
-    fn try_delete_file(&self, path: &PathBuf) -> bool {
+    fn try_delete_file(&self, path: &PathBuf) -> Option<()> {
         if !self.is_on_disk(path) {
-            return false;
+            return None;
         }
 
-        let _lock = self.lock.lock().unwrap();
+        let _lock = self.lock.lock().expect("failed to acquire lock");
 
         tracing::info!("deleting file {path:?}");
 
-        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(path).ok()?;
 
-        true
+        Some(())
     }
 }
 
@@ -116,7 +116,7 @@ impl LockedIO {
 
     pub fn try_read_file(&self, path: &Path, buf: &mut [u8]) -> bool {
         for disk in &self.disks {
-            if disk.try_read_file(path, buf) {
+            if disk.try_read_file(path, buf).is_some() {
                 return true;
             }
         }
@@ -146,7 +146,7 @@ impl LockedIO {
 
     pub fn try_write_file(&self, path: &Path, data: &[u8]) -> bool {
         for disk in &self.disks {
-            if disk.try_write_file(path, data) {
+            if disk.try_write_file(path, data).is_some() {
                 return true;
             }
         }

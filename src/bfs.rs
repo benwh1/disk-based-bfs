@@ -397,7 +397,7 @@ impl<
 
     fn read_state(&self) -> Option<State> {
         let file_path = self.settings.state_file_path();
-        let str = self.locked_io.read_to_string(&file_path);
+        let str = self.locked_io.try_read_to_string(&file_path)?;
         serde_json::from_str(&str).ok()
     }
 
