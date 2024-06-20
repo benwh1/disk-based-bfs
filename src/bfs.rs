@@ -10,7 +10,11 @@ use cityhasher::{CityHasher, HashSet};
 use rand::distributions::{Alphanumeric, DistString};
 use serde_derive::{Deserialize, Serialize};
 
-use crate::{callback::BfsCallback, io::LockedIO, settings::BfsSettings};
+use crate::{
+    callback::BfsCallback,
+    io::{self, LockedIO},
+    settings::BfsSettings,
+};
 
 pub enum InMemoryBfsResult {
     Complete,
@@ -957,6 +961,8 @@ impl<
     }
 
     fn end_of_depth_cleanup(&self, depth: usize) {
+        io::sync();
+
         // We now have the array at depth `depth + 1`, and update files/arrays for depth
         // `depth + 2`, so we can delete the directories (which should be empty) for the
         // previous depth.

@@ -185,6 +185,8 @@ impl LockedIO {
         deletion_queue_lock.push(path);
 
         if deletion_queue_lock.len() >= 256 {
+            sync();
+
             tracing::info!("flushing deletion queue");
 
             for path in deletion_queue_lock.drain(..) {
@@ -193,5 +195,13 @@ impl LockedIO {
                 }
             }
         }
+    }
+}
+
+pub fn sync() {
+    tracing::info!("syncing filesystem");
+
+    unsafe {
+        libc::sync();
     }
 }
