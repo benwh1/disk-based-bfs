@@ -797,17 +797,17 @@ impl<
             depth += 1;
             total += new;
 
+            if total > max_capacity {
+                tracing::info!("exceeded memory limit");
+                break;
+            }
+
             tracing::info!("depth {depth} new {new}");
 
             // No new nodes, we are done already.
             if new == 0 {
                 tracing::info!("no new nodes, done");
                 return InMemoryBfsResult::Complete;
-            }
-
-            if total > max_capacity {
-                tracing::info!("exceeded memory limit");
-                break;
             }
 
             for val in current.drain() {
