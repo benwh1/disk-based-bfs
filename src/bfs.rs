@@ -276,12 +276,13 @@ impl<'a> UpdateManager<'a> {
 
     fn delete_update_files(&self, depth: usize, chunk_idx: usize) {
         let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
-
-        if !dir_path.exists() {
+        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
             return;
-        }
+        };
 
-        std::fs::remove_dir_all(dir_path).unwrap();
+        for file_path in read_dir.flatten().map(|entry| entry.path()) {
+            self.locked_io.queue_deletion(file_path);
+        }
 
         let mut lock = self.sizes.write().unwrap();
         lock.entry(depth).and_modify(|entry| entry[chunk_idx] = 0);
@@ -301,7 +302,7 @@ impl<'a> UpdateManager<'a> {
             .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("used"))
         {
             bytes_deleted += file_path.metadata().unwrap().len();
-            std::fs::remove_file(file_path).unwrap();
+            self.locked_io.queue_deletion(file_path);
         }
 
         let mut lock = self.sizes.write().unwrap();
@@ -470,14 +471,14 @@ impl<
     fn delete_chunk_file(&self, depth: usize, chunk_idx: usize) {
         let file_path = self.settings.chunk_file_path(depth, chunk_idx);
         if file_path.exists() {
-            std::fs::remove_file(file_path).unwrap();
+            self.locked_io.queue_deletion(file_path);
         }
     }
 
     fn delete_update_array(&self, depth: usize, chunk_idx: usize) {
         let file_path = self.settings.update_array_file_path(depth, chunk_idx);
         if file_path.exists() {
-            std::fs::remove_file(file_path).unwrap();
+            self.locked_io.queue_deletion(file_path);
         }
     }
 
