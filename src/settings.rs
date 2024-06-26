@@ -11,6 +11,7 @@ pub struct BfsSettingsBuilder {
     initial_memory_limit: Option<usize>,
     update_files_compression_threshold: Option<u64>,
     buf_io_capacity: Option<usize>,
+    use_locked_io: Option<bool>,
     sync_filesystem: Option<bool>,
 }
 
@@ -33,6 +34,7 @@ impl BfsSettingsBuilder {
             initial_memory_limit: None,
             update_files_compression_threshold: None,
             buf_io_capacity: None,
+            use_locked_io: None,
             sync_filesystem: None,
         }
     }
@@ -93,6 +95,11 @@ impl BfsSettingsBuilder {
         self
     }
 
+    pub fn use_locked_io(mut self, use_locked_io: bool) -> Self {
+        self.use_locked_io = Some(use_locked_io);
+        self
+    }
+
     pub fn sync_filesystem(mut self, sync_filesystem: bool) -> Self {
         self.sync_filesystem = Some(sync_filesystem);
         self
@@ -117,6 +124,7 @@ impl BfsSettingsBuilder {
             initial_memory_limit: self.initial_memory_limit?,
             update_files_compression_threshold: self.update_files_compression_threshold?,
             buf_io_capacity: self.buf_io_capacity?,
+            use_locked_io: self.use_locked_io?,
             sync_filesystem: self.sync_filesystem?,
         })
     }
@@ -133,6 +141,7 @@ pub struct BfsSettings {
     pub(crate) initial_memory_limit: usize,
     pub(crate) update_files_compression_threshold: u64,
     pub(crate) buf_io_capacity: usize,
+    pub(crate) use_locked_io: bool,
     pub(crate) sync_filesystem: bool,
 }
 

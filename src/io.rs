@@ -2,17 +2,21 @@ use std::{
     fs::File,
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Mutex, MutexGuard},
 };
 
-pub struct LockedDisk {
+use crate::settings::BfsSettings;
+
+pub struct LockedDisk<'a> {
+    settings: &'a BfsSettings,
     lock: Mutex<()>,
     disk_path: PathBuf,
 }
 
-impl LockedDisk {
-    pub fn new(disk_path: PathBuf) -> Self {
+impl<'a> LockedDisk<'a> {
+    pub fn new(settings: &'a BfsSettings, disk_path: PathBuf) -> Self {
         Self {
+            settings,
             lock: Mutex::new(()),
             disk_path,
         }
@@ -22,12 +26,20 @@ impl LockedDisk {
         path.starts_with(&self.disk_path)
     }
 
+    fn lock(&self) -> Option<MutexGuard<()>> {
+        if self.settings.use_locked_io {
+            Some(self.lock.lock().expect("failed to acquire lock"))
+        } else {
+            None
+        }
+    }
+
     pub fn try_read_file(&self, path: &Path, buf: &mut [u8]) -> Option<()> {
         if !self.is_on_disk(path) {
             return None;
         }
 
-        let _lock = self.lock.lock().expect("failed to acquire lock");
+        let _lock = self.lock();
 
         tracing::info!("reading file {path:?}");
 
@@ -42,7 +54,7 @@ impl LockedDisk {
             return None;
         }
 
-        let _lock = self.lock.lock().expect("failed to acquire lock");
+        let _lock = self.lock();
 
         tracing::info!("reading file {path:?}");
 
@@ -58,7 +70,7 @@ impl LockedDisk {
             return None;
         }
 
-        let _lock = self.lock.lock().expect("failed to acquire lock");
+        let _lock = self.lock();
 
         tracing::info!("reading file {path:?}");
 
@@ -74,7 +86,7 @@ impl LockedDisk {
             return None;
         }
 
-        let _lock = self.lock.lock().expect("failed to acquire lock");
+        let _lock = self.lock();
 
         tracing::info!("writing file {path:?}");
 
@@ -96,7 +108,7 @@ impl LockedDisk {
             return None;
         }
 
-        let _lock = self.lock.lock().expect("failed to acquire lock");
+        let _lock = self.lock();
 
         tracing::info!("deleting file {path:?}");
 
@@ -106,19 +118,23 @@ impl LockedDisk {
     }
 }
 
-pub struct LockedIO {
-    disks: Vec<LockedDisk>,
+pub struct LockedIO<'a> {
+    settings: &'a BfsSettings,
+    disks: Vec<LockedDisk<'a>>,
     deletion_queue: Mutex<Vec<PathBuf>>,
-    sync_filesystem: bool,
 }
 
-impl LockedIO {
-    pub fn new(disk_paths: Vec<PathBuf>, sync_filesystem: bool) -> Self {
-        let disks = disk_paths.into_iter().map(LockedDisk::new).collect();
+impl<'a> LockedIO<'a> {
+    pub fn new(settings: &'a BfsSettings, disk_paths: Vec<PathBuf>) -> Self {
+        let disks = disk_paths
+            .into_iter()
+            .map(|disk_path| LockedDisk::new(settings, disk_path))
+            .collect();
+
         Self {
+            settings,
             disks,
             deletion_queue: Mutex::new(Vec::new()),
-            sync_filesystem,
         }
     }
 
@@ -209,7 +225,7 @@ impl LockedIO {
         deletion_queue_lock.push(path);
 
         if deletion_queue_lock.len() >= 256 {
-            if self.sync_filesystem {
+            if self.settings.sync_filesystem {
                 sync();
             }
 

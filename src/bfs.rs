@@ -112,7 +112,7 @@ impl FilledUpdateBlock {
 
 struct UpdateBlockList<'a> {
     settings: &'a BfsSettings,
-    locked_io: &'a LockedIO,
+    locked_io: &'a LockedIO<'a>,
     available_blocks: Vec<AvailableUpdateBlock>,
     filled_blocks: Vec<FilledUpdateBlock>,
 }
@@ -187,7 +187,7 @@ impl<'a> UpdateBlockList<'a> {
 
 struct UpdateManager<'a> {
     settings: &'a BfsSettings,
-    locked_io: &'a LockedIO,
+    locked_io: &'a LockedIO<'a>,
     sizes: RwLock<HashMap<usize, Vec<u64>>>,
     size_file_lock: Mutex<()>,
     update_blocks: Mutex<UpdateBlockList<'a>>,
@@ -328,7 +328,7 @@ pub struct Bfs<
     const EXPANSION_NODES: usize,
 > {
     settings: &'a BfsSettings,
-    locked_io: &'a LockedIO,
+    locked_io: &'a LockedIO<'a>,
     expander: Expander,
     callback: Callback,
     chunk_buffers: ChunkBufferList,
