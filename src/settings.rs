@@ -11,6 +11,7 @@ pub struct BfsSettingsBuilder {
     initial_memory_limit: Option<usize>,
     update_files_compression_threshold: Option<u64>,
     buf_io_capacity: Option<usize>,
+    sync_filesystem: Option<bool>,
 }
 
 impl Default for BfsSettingsBuilder {
@@ -32,6 +33,7 @@ impl BfsSettingsBuilder {
             initial_memory_limit: None,
             update_files_compression_threshold: None,
             buf_io_capacity: None,
+            sync_filesystem: None,
         }
     }
 
@@ -91,6 +93,11 @@ impl BfsSettingsBuilder {
         self
     }
 
+    pub fn sync_filesystem(mut self, sync_filesystem: bool) -> Self {
+        self.sync_filesystem = Some(sync_filesystem);
+        self
+    }
+
     pub fn build(self) -> Option<BfsSettings> {
         // Require that all chunks are the same size
         let chunk_size_bytes = self.chunk_size_bytes?;
@@ -110,6 +117,7 @@ impl BfsSettingsBuilder {
             initial_memory_limit: self.initial_memory_limit?,
             update_files_compression_threshold: self.update_files_compression_threshold?,
             buf_io_capacity: self.buf_io_capacity?,
+            sync_filesystem: self.sync_filesystem?,
         })
     }
 }
@@ -125,6 +133,7 @@ pub struct BfsSettings {
     pub(crate) initial_memory_limit: usize,
     pub(crate) update_files_compression_threshold: u64,
     pub(crate) buf_io_capacity: usize,
+    pub(crate) sync_filesystem: bool,
 }
 
 impl BfsSettings {

@@ -103,14 +103,16 @@ impl LockedDisk {
 pub struct LockedIO {
     disks: Vec<LockedDisk>,
     deletion_queue: Mutex<Vec<PathBuf>>,
+    sync_filesystem: bool,
 }
 
 impl LockedIO {
-    pub fn new(disk_paths: Vec<PathBuf>) -> Self {
+    pub fn new(disk_paths: Vec<PathBuf>, sync_filesystem: bool) -> Self {
         let disks = disk_paths.into_iter().map(LockedDisk::new).collect();
         Self {
             disks,
             deletion_queue: Mutex::new(Vec::new()),
+            sync_filesystem,
         }
     }
 
@@ -185,7 +187,9 @@ impl LockedIO {
         deletion_queue_lock.push(path);
 
         if deletion_queue_lock.len() >= 256 {
-            sync();
+            if self.sync_filesystem {
+                sync();
+            }
 
             tracing::info!("flushing deletion queue");
 

@@ -961,7 +961,9 @@ impl<
     }
 
     fn end_of_depth_cleanup(&self, depth: usize) {
-        io::sync();
+        if self.settings.sync_filesystem {
+            io::sync();
+        }
 
         // We now have the array at depth `depth + 1`, and update files/arrays for depth
         // `depth + 2`, so we can delete the directories (which should be empty) for the
