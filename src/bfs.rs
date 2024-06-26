@@ -627,7 +627,7 @@ impl<
         };
 
         for file_path in read_dir.flatten().map(|entry| entry.path()) {
-            let bytes = std::fs::read(&file_path).unwrap();
+            let bytes = self.locked_io.read_to_vec(&file_path);
             assert_eq!(bytes.len() % 4, 0);
 
             // Group the bytes into groups of 4
@@ -684,9 +684,7 @@ impl<
         let file_len = file_path.metadata().unwrap().len() as usize;
         assert_eq!(file_len, self.settings.chunk_size_bytes);
 
-        tracing::debug!("reading file {file_path:?}");
-        let update_array_bytes = std::fs::read(&file_path).unwrap();
-        tracing::debug!("finished reading file {file_path:?}");
+        let update_array_bytes = self.locked_io.read_to_vec(&file_path);
 
         for (byte_idx, &update_byte) in update_array_bytes.iter().enumerate() {
             for bit_idx in 0..8 {
