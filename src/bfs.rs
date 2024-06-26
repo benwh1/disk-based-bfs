@@ -160,11 +160,8 @@ impl<'a> UpdateBlockList<'a> {
 
             // Write all the blocks in the chunk to a single big update file
             for block in chunk {
-                for &val in &block.updates {
-                    if writer.write(&val.to_le_bytes()).unwrap() != 4 {
-                        panic!("failed to write to update file");
-                    }
-                }
+                let bytes: &[u8] = bytemuck::cast_slice(&block.updates);
+                writer.write_all(bytes).unwrap();
             }
 
             drop(writer);
