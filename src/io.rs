@@ -66,6 +66,10 @@ impl LockedDisk {
     }
 
     pub fn try_write_file(&self, path: &Path, data: &[u8]) -> Option<()> {
+        self.try_write_file_multiple_buffers(path, &[data])
+    }
+
+    pub fn try_write_file_multiple_buffers(&self, path: &Path, data: &[&[u8]]) -> Option<()> {
         if !self.is_on_disk(path) {
             return None;
         }
@@ -76,7 +80,9 @@ impl LockedDisk {
 
         let path_tmp = path.with_extension("tmp");
         let mut file = File::create(&path_tmp).ok()?;
-        file.write_all(&data).ok()?;
+        for data in data {
+            file.write_all(data).ok()?;
+        }
 
         drop(file);
 
@@ -156,6 +162,16 @@ impl LockedIO {
         false
     }
 
+    pub fn try_write_file_multiple_buffers(&self, path: &Path, data: &[&[u8]]) -> bool {
+        for disk in &self.disks {
+            if disk.try_write_file_multiple_buffers(path, data).is_some() {
+                return true;
+            }
+        }
+
+        false
+    }
+
     pub fn read_file(&self, path: &Path, buf: &mut [u8]) {
         if !self.try_read_file(path, buf) {
             panic!("file path {path:?} not on any disk");
@@ -178,6 +194,12 @@ impl LockedIO {
 
     pub fn write_file(&self, path: &Path, data: &[u8]) {
         if !self.try_write_file(path, data) {
+            panic!("file path {path:?} not on any disk");
+        }
+    }
+
+    pub fn write_file_multiple_buffers(&self, path: &Path, data: &[&[u8]]) {
+        if !self.try_write_file_multiple_buffers(path, data) {
             panic!("file path {path:?} not on any disk");
         }
     }

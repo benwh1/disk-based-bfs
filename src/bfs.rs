@@ -112,12 +112,13 @@ impl FilledUpdateBlock {
 
 struct UpdateBlockList<'a> {
     settings: &'a BfsSettings,
+    locked_io: &'a LockedIO,
     available_blocks: Vec<AvailableUpdateBlock>,
     filled_blocks: Vec<FilledUpdateBlock>,
 }
 
 impl<'a> UpdateBlockList<'a> {
-    fn new(settings: &'a BfsSettings) -> Self {
+    fn new(settings: &'a BfsSettings, locked_io: &'a LockedIO) -> Self {
         let num_blocks = settings.threads * settings.num_array_chunks();
         let available_blocks = (0..num_blocks)
             .map(|_| AvailableUpdateBlock::new(settings.update_capacity_per_vec()))
@@ -126,6 +127,7 @@ impl<'a> UpdateBlockList<'a> {
 
         Self {
             settings,
+            locked_io,
             available_blocks,
             filled_blocks,
         }
@@ -151,24 +153,15 @@ impl<'a> UpdateBlockList<'a> {
 
             let mut rng = rand::thread_rng();
             let file_name = Alphanumeric.sample_string(&mut rng, 16);
-            let mut file_path = dir_path.join(file_name);
-            file_path.set_extension("dat");
+            let file_path = dir_path.join(file_name);
 
-            let file_path_tmp = file_path.with_extension("tmp");
-            let file = File::create(&file_path_tmp).unwrap();
-            let mut writer = BufWriter::with_capacity(self.settings.buf_io_capacity, file);
+            let buffers = chunk
+                .iter()
+                .map(|block| bytemuck::cast_slice(&block.updates))
+                .collect::<Vec<_>>();
 
-            // Write all the blocks in the chunk to a single big update file
-            for block in chunk {
-                let bytes: &[u8] = bytemuck::cast_slice(&block.updates);
-                writer.write_all(bytes).unwrap();
-            }
-
-            drop(writer);
-
-            std::fs::rename(file_path_tmp, &file_path).unwrap();
-
-            tracing::debug!("finished writing file {file_path:?}");
+            self.locked_io
+                .write_file_multiple_buffers(&file_path, &buffers);
         }
 
         for block in self.filled_blocks.drain(..) {
@@ -207,7 +200,7 @@ impl<'a> UpdateManager<'a> {
             locked_io,
             sizes: RwLock::new(HashMap::new()),
             size_file_lock: Mutex::new(()),
-            update_blocks: Mutex::new(UpdateBlockList::new(settings)),
+            update_blocks: Mutex::new(UpdateBlockList::new(settings, locked_io)),
         }
     }
 
