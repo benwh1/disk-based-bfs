@@ -719,7 +719,7 @@ impl<
 
         for &state in &self.settings.initial_states {
             if current.insert(state) {
-                callback.new_state(depth + 1, state);
+                callback.new_state(0, state);
             }
         }
 
