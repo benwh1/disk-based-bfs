@@ -144,28 +144,49 @@ impl<'a> UpdateBlockList<'a> {
         self.filled_blocks
             .sort_unstable_by_key(|block| (block.depth, block.chunk_idx));
 
-        for chunk in self
-            .filled_blocks
-            .chunk_by_mut(|b1, b2| (b1.depth, b1.chunk_idx) == (b2.depth, b2.chunk_idx))
-        {
-            let depth = chunk[0].depth;
-            let chunk_idx = chunk[0].chunk_idx;
+        let num_threads = self.locked_io.num_disks();
 
-            let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
-            std::fs::create_dir_all(&dir_path).unwrap();
-
-            let mut rng = rand::thread_rng();
-            let file_name = Alphanumeric.sample_string(&mut rng, 16);
-            let file_path = dir_path.join(file_name);
-
-            let buffers = chunk
-                .iter()
-                .map(|block| bytemuck::cast_slice(&block.updates))
-                .collect::<Vec<_>>();
-
-            self.locked_io
-                .write_file_multiple_buffers(&file_path, &buffers);
+        // Take all of the filled blocks and sort them into separate vectors, one per thread
+        let mut filled_blocks = (0..num_threads).map(|_| Vec::new()).collect::<Vec<_>>();
+        for block in self.filled_blocks.drain(..) {
+            let thread_idx = block.chunk_idx % num_threads;
+            filled_blocks[thread_idx].push(block);
         }
+
+        std::thread::scope(|s| {
+            (0..num_threads)
+                .map(|thread| {
+                    let mut filled_blocks = std::mem::take(&mut filled_blocks[thread]);
+                    let settings = self.settings;
+                    let locked_io = self.locked_io;
+
+                    s.spawn(move || {
+                        for chunk in filled_blocks.chunk_by_mut(|b1, b2| {
+                            (b1.depth, b1.chunk_idx) == (b2.depth, b2.chunk_idx)
+                        }) {
+                            let depth = chunk[0].depth;
+                            let chunk_idx = chunk[0].chunk_idx;
+
+                            let dir_path = settings.update_chunk_dir_path(depth, chunk_idx);
+                            std::fs::create_dir_all(&dir_path).unwrap();
+
+                            let mut rng = rand::thread_rng();
+                            let file_name = Alphanumeric.sample_string(&mut rng, 16);
+                            let file_path = dir_path.join(file_name);
+
+                            let buffers = chunk
+                                .iter()
+                                .map(|block| bytemuck::cast_slice(&block.updates))
+                                .collect::<Vec<_>>();
+
+                            locked_io.write_file_multiple_buffers(&file_path, &buffers);
+                        }
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .for_each(|t| t.join().unwrap());
+        });
 
         for block in self.filled_blocks.drain(..) {
             self.available_blocks.push(block.clear());

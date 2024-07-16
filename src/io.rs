@@ -138,6 +138,10 @@ impl<'a> LockedIO<'a> {
         }
     }
 
+    pub fn num_disks(&self) -> usize {
+        self.disks.len()
+    }
+
     pub fn try_read_file(&self, path: &Path, buf: &mut [u8]) -> bool {
         for disk in &self.disks {
             if disk.try_read_file(path, buf).is_some() {
