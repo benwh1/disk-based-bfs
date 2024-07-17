@@ -144,26 +144,19 @@ impl<'a> UpdateBlockList<'a> {
         self.filled_blocks
             .sort_unstable_by_key(|block| (block.depth, block.chunk_idx));
 
-        let num_threads = self.locked_io.num_disks();
-
-        // Take all of the filled blocks and sort them into separate vectors, one per thread
-        let mut filled_blocks = (0..num_threads).map(|_| Vec::new()).collect::<Vec<_>>();
-        for block in self.filled_blocks.drain(..) {
-            let thread_idx = block.chunk_idx % num_threads;
-            filled_blocks[thread_idx].push(block);
-        }
-
+        let num_disks = self.locked_io.num_disks();
         std::thread::scope(|s| {
-            (0..num_threads)
+            (0..num_disks)
                 .map(|thread| {
-                    let mut filled_blocks = std::mem::take(&mut filled_blocks[thread]);
+                    let filled_blocks = &self.filled_blocks;
                     let settings = self.settings;
                     let locked_io = self.locked_io;
 
                     s.spawn(move || {
-                        for chunk in filled_blocks.chunk_by_mut(|b1, b2| {
-                            (b1.depth, b1.chunk_idx) == (b2.depth, b2.chunk_idx)
-                        }) {
+                        for chunk in filled_blocks
+                            .chunk_by(|b1, b2| (b1.depth, b1.chunk_idx) == (b2.depth, b2.chunk_idx))
+                            .filter(|chunk| chunk[0].chunk_idx % num_disks == thread)
+                        {
                             let depth = chunk[0].depth;
                             let chunk_idx = chunk[0].chunk_idx;
 
