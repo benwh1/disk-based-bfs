@@ -119,7 +119,7 @@ struct UpdateBlockList<'a> {
 
 impl<'a> UpdateBlockList<'a> {
     fn new(settings: &'a BfsSettings, locked_io: &'a LockedIO) -> Self {
-        let num_blocks = settings.threads * settings.num_array_chunks();
+        let num_blocks = 2 * settings.threads * settings.num_array_chunks();
 
         tracing::debug!("creating {num_blocks} update blocks");
 
