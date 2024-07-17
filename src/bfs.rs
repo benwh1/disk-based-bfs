@@ -193,12 +193,15 @@ impl<'a> UpdateBlockList<'a> {
         }
     }
 
-    fn take(&mut self) -> AvailableUpdateBlock {
-        if let Some(block) = self.available_blocks.pop() {
+    fn take_impl(&mut self, log: bool) -> AvailableUpdateBlock {
+        if log {
             tracing::debug!(
                 "taking update block, {} blocks remaining",
                 self.available_blocks.len(),
             );
+        }
+
+        if let Some(block) = self.available_blocks.pop() {
             return block;
         }
 
@@ -206,6 +209,10 @@ impl<'a> UpdateBlockList<'a> {
 
         // All blocks will be available now
         self.available_blocks.pop().unwrap()
+    }
+
+    fn take(&mut self) -> AvailableUpdateBlock {
+        self.take_impl(true)
     }
 
     fn put(&mut self, block: FilledUpdateBlock) {
@@ -263,9 +270,14 @@ impl<'a> UpdateManager<'a> {
     fn take_n(&self, n: usize) -> Vec<AvailableUpdateBlock> {
         let mut update_blocks_lock = self.update_blocks.lock().unwrap();
 
+        tracing::debug!(
+            "taking {n} update blocks, {} blocks remaining",
+            update_blocks_lock.available_blocks.len(),
+        );
+
         let mut blocks = Vec::with_capacity(n);
         for _ in 0..n {
-            blocks.push(update_blocks_lock.take());
+            blocks.push(update_blocks_lock.take_impl(false));
         }
 
         blocks
