@@ -303,40 +303,25 @@ impl<'a> UpdateManager<'a> {
         self.update_blocks.lock().unwrap().write_all();
     }
 
-    fn delete_update_files(&self, depth: usize, chunk_idx: usize) {
-        let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
-        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
-            return;
-        };
-
-        for file_path in read_dir.flatten().map(|entry| entry.path()) {
-            self.locked_io.queue_deletion(file_path);
+    fn delete_update_files_impl(&self, depth: usize, chunk_idx: usize, delete_used_only: bool) {
+        if delete_used_only {
+            tracing::debug!("deleting used update files for depth {depth} chunk {chunk_idx}");
+        } else {
+            tracing::debug!("deleting update files for depth {depth} chunk {chunk_idx}");
         }
 
-        self.sizes
-            .write()
-            .unwrap()
-            .entry(depth)
-            .and_modify(|entry| entry[chunk_idx] = 0);
-
-        self.write_sizes_to_disk();
-    }
-
-    fn delete_used_update_files(&self, depth: usize, chunk_idx: usize) {
-        let mut bytes_deleted = 0;
-
         let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
         let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
             return;
         };
 
-        for file_path in read_dir
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("used"))
-        {
-            bytes_deleted += file_path.metadata().unwrap().len();
-            self.locked_io.queue_deletion(file_path);
+        let mut bytes_deleted = 0;
+
+        for path in read_dir.flatten().map(|entry| entry.path()) {
+            if !delete_used_only || path.extension().and_then(|ext| ext.to_str()) == Some("used") {
+                bytes_deleted += path.metadata().unwrap().len();
+                self.locked_io.queue_deletion(path);
+            }
         }
 
         self.sizes
@@ -346,6 +331,14 @@ impl<'a> UpdateManager<'a> {
             .and_modify(|entry| entry[chunk_idx] = entry[chunk_idx].saturating_sub(bytes_deleted));
 
         self.write_sizes_to_disk();
+    }
+
+    fn delete_update_files(&self, depth: usize, chunk_idx: usize) {
+        self.delete_update_files_impl(depth, chunk_idx, false);
+    }
+
+    fn delete_used_update_files(&self, depth: usize, chunk_idx: usize) {
+        self.delete_update_files_impl(depth, chunk_idx, true);
     }
 
     fn files_size(&self, depth: usize, chunk_idx: usize) -> u64 {
