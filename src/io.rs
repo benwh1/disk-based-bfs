@@ -224,6 +224,18 @@ impl<'a> LockedIO<'a> {
         Err(Error::FileNotOnAnyDisk(path))
     }
 
+    fn try_delete_file<'b>(&self, path: &'b Path) -> Result<(), Error<'b>> {
+        for disk in &self.disks {
+            let result = disk.try_delete_file(path);
+            match result {
+                Err(Error::FileNotOnDisk(_)) => continue,
+                _ => return result,
+            }
+        }
+
+        Err(Error::FileNotOnAnyDisk(path))
+    }
+
     pub fn read_file<'b>(&self, path: &'b Path, buf: &mut [u8]) {
         self.try_read_file(path, buf).unwrap();
     }
@@ -244,6 +256,10 @@ impl<'a> LockedIO<'a> {
         self.try_write_file_multiple_buffers(path, data).unwrap();
     }
 
+    fn delete_file(&self, path: &Path) {
+        self.try_delete_file(path).unwrap();
+    }
+
     pub fn queue_deletion(&self, path: PathBuf) {
         let mut deletion_queue_lock = self.deletion_queue.lock().expect("failed to acquire lock");
         deletion_queue_lock.push(path);
@@ -258,13 +274,7 @@ impl<'a> LockedIO<'a> {
             tracing::debug!("flushing deletion queue ({num_files} files)");
 
             for path in deletion_queue_lock.drain(..) {
-                for disk in &self.disks {
-                    let result = disk.try_delete_file(&path);
-                    match result {
-                        Err(Error::FileNotOnDisk(_)) => continue,
-                        _ => break,
-                    }
-                }
+                self.delete_file(&path);
             }
 
             tracing::debug!("finished flushing deletion queue");
