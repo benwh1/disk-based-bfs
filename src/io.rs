@@ -55,7 +55,7 @@ impl<'a> LockedDisk<'a> {
 
         let _lock = self.lock();
 
-        tracing::info!("reading file {path:?}");
+        tracing::trace!("reading file {path:?}");
 
         let mut file = File::open(&path)?;
         file.read_exact(buf)?;
@@ -70,7 +70,7 @@ impl<'a> LockedDisk<'a> {
 
         let _lock = self.lock();
 
-        tracing::info!("reading file {path:?}");
+        tracing::trace!("reading file {path:?}");
 
         let mut file = File::open(&path)?;
         let mut buf = String::new();
@@ -86,7 +86,7 @@ impl<'a> LockedDisk<'a> {
 
         let _lock = self.lock();
 
-        tracing::info!("reading file {path:?}");
+        tracing::trace!("reading file {path:?}");
 
         Ok(std::fs::read(&path)?)
     }
@@ -106,7 +106,7 @@ impl<'a> LockedDisk<'a> {
 
         let _lock = self.lock();
 
-        tracing::info!("writing file {path:?}");
+        tracing::trace!("writing file {path:?}");
 
         let path_tmp = path.with_extension("tmp");
         let mut file = File::create(&path_tmp)?;
@@ -128,7 +128,7 @@ impl<'a> LockedDisk<'a> {
 
         let _lock = self.lock();
 
-        tracing::info!("deleting file {path:?}");
+        tracing::trace!("deleting file {path:?}");
 
         std::fs::remove_file(path)?;
 
@@ -248,12 +248,14 @@ impl<'a> LockedIO<'a> {
         let mut deletion_queue_lock = self.deletion_queue.lock().expect("failed to acquire lock");
         deletion_queue_lock.push(path);
 
-        if deletion_queue_lock.len() >= 256 {
+        let num_files = deletion_queue_lock.len();
+
+        if num_files >= 256 {
             if self.settings.sync_filesystem {
                 sync();
             }
 
-            tracing::info!("flushing deletion queue");
+            tracing::debug!("flushing deletion queue ({num_files} files)");
 
             for path in deletion_queue_lock.drain(..) {
                 for disk in &self.disks {
@@ -264,12 +266,14 @@ impl<'a> LockedIO<'a> {
                     }
                 }
             }
+
+            tracing::debug!("finished flushing deletion queue");
         }
     }
 }
 
 pub fn sync() {
-    tracing::info!("syncing filesystem");
+    tracing::debug!("syncing filesystem");
 
     unsafe {
         libc::sync();

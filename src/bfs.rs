@@ -137,7 +137,7 @@ impl<'a> UpdateBlockList<'a> {
     }
 
     fn write_all(&mut self) {
-        tracing::info!("writing {} update blocks", self.filled_blocks.len());
+        tracing::debug!("writing {} update blocks", self.filled_blocks.len());
 
         // Sort the updates so that all the blocks that belong in the same file are consecutive,
         // so that we can use `chunk_by_mut` to group them together
@@ -184,6 +184,8 @@ impl<'a> UpdateBlockList<'a> {
         for block in self.filled_blocks.drain(..) {
             self.available_blocks.push(block.clear());
         }
+
+        tracing::debug!("finished writing update blocks");
     }
 
     fn take_impl(&mut self, log: bool) -> AvailableUpdateBlock {
@@ -850,7 +852,6 @@ impl<
 
             // No new nodes, we are done already.
             if new == 0 {
-                tracing::info!("no new nodes, done");
                 return InMemoryBfsResult::Complete;
             }
 
@@ -936,17 +937,17 @@ impl<
             // terminated before we could delete the chunk file, and we are now re-processing the
             // same chunk. In that case, there are still states to count.
             if d <= depth {
-                tracing::info!("[Thread {t}] chunk {chunk_idx} is exhausted");
+                tracing::debug!("[Thread {t}] chunk {chunk_idx} is exhausted");
                 tracing::info!("[Thread {t}] depth {} chunk {chunk_idx} new 0", depth + 1);
                 return 0;
             }
         }
 
         if let Some(hashsets) = create_chunk_hashsets {
-            tracing::info!("[Thread {t}] creating depth {depth} chunk {chunk_idx}");
+            tracing::debug!("[Thread {t}] creating depth {depth} chunk {chunk_idx}");
             self.create_chunk(chunk_buffer, hashsets, chunk_idx);
         } else {
-            tracing::info!("[Thread {t}] reading depth {depth} chunk {chunk_idx}");
+            tracing::debug!("[Thread {t}] reading depth {depth} chunk {chunk_idx}");
             if !self.try_read_chunk(chunk_buffer, depth, chunk_idx) {
                 // No chunk file, so check that it has already been expanded
                 let next_chunk_file = self.settings.chunk_file_path(depth + 1, chunk_idx);
@@ -974,28 +975,28 @@ impl<
             depth + 1
         );
 
-        tracing::info!("[Thread {t}] writing depth {} chunk {chunk_idx}", depth + 1);
+        tracing::debug!("[Thread {t}] writing depth {} chunk {chunk_idx}", depth + 1);
         self.write_chunk(chunk_buffer, depth + 1, chunk_idx);
 
         // Check if the chunk is exhausted. If so, there are no new positions at depth `depth + 2`
         // or beyond. The depth written to the exhausted file is `depth + 1`, which is the maximum
         // depth of a state in this chunk.
         if chunk_buffer.iter().all(|&byte| byte == 0xFF) {
-            tracing::info!("[Thread {t}] marking chunk {chunk_idx} as exhausted");
+            tracing::debug!("[Thread {t}] marking chunk {chunk_idx} as exhausted");
             self.mark_chunk_exhausted(depth + 1, chunk_idx);
         }
 
-        tracing::info!("[Thread {t}] deleting depth {depth} chunk {chunk_idx}");
+        tracing::debug!("[Thread {t}] deleting depth {depth} chunk {chunk_idx}");
         self.delete_chunk_file(depth, chunk_idx);
 
-        tracing::info!(
+        tracing::debug!(
             "[Thread {t}] deleting update files for depth {depth} -> {} chunk {chunk_idx}",
             depth + 1
         );
         self.update_file_manager
             .delete_update_files(depth + 1, chunk_idx);
 
-        tracing::info!(
+        tracing::debug!(
             "[Thread {t}] deleting update array for depth {depth} -> {} chunk {chunk_idx}",
             depth + 1
         );
@@ -1013,13 +1014,13 @@ impl<
         // `depth + 2`, so we can delete the directories (which should be empty) for the
         // previous depth.
         for root_idx in 0..self.settings.root_directories.len() {
-            tracing::info!("deleting root directory {root_idx} depth {depth} chunk files");
+            tracing::debug!("deleting root directory {root_idx} depth {depth} chunk files");
             let dir_path = self.settings.chunk_dir_path(depth, root_idx);
             if dir_path.exists() {
                 std::fs::remove_dir_all(dir_path).unwrap();
             }
 
-            tracing::info!(
+            tracing::debug!(
                 "deleting root directory {root_idx} depth {} update files",
                 depth + 1
             );
@@ -1028,7 +1029,7 @@ impl<
                 std::fs::remove_dir_all(dir_path).unwrap();
             }
 
-            tracing::info!(
+            tracing::debug!(
                 "deleting root directory {root_idx} depth {} update arrays",
                 depth + 1
             );
@@ -1038,7 +1039,7 @@ impl<
             }
         }
 
-        tracing::info!("Deleting depth {} new positions files", depth + 1);
+        tracing::debug!("deleting depth {} new positions files", depth + 1);
         self.delete_new_positions_data_dir(depth + 1);
     }
 
@@ -1200,7 +1201,7 @@ impl<
                             let mut chunk_buffer = self.chunk_buffers.take().unwrap();
 
                             // Process the chunk
-                            tracing::info!("[Thread {t}] processing depth {depth} chunk {chunk_idx}");
+                            tracing::debug!("[Thread {t}] processing depth {depth} chunk {chunk_idx}");
                             let chunk_new = self.process_chunk(
                                 &mut chunk_buffer,
                                 create_chunk_hashsets,
@@ -1208,7 +1209,7 @@ impl<
                                 depth,
                                 chunk_idx,
                             );
-                            tracing::info!("[Thread {t}] finished processing depth {depth} chunk {chunk_idx}");
+                            tracing::debug!("[Thread {t}] finished processing depth {depth} chunk {chunk_idx}");
 
                             *new_states.lock().unwrap() += chunk_new;
 
@@ -1237,7 +1238,7 @@ impl<
             threads.into_iter().for_each(|t| t.join().unwrap());
         });
 
-        tracing::info!("writing remaining update files");
+        tracing::debug!("flushing remaining update files");
         self.update_file_manager.flush();
 
         let new = *new_states.lock().unwrap();
