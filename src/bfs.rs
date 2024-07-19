@@ -313,8 +313,11 @@ impl<'a> UpdateManager<'a> {
             self.locked_io.queue_deletion(file_path);
         }
 
-        let mut lock = self.sizes.write().unwrap();
-        lock.entry(depth).and_modify(|entry| entry[chunk_idx] = 0);
+        self.sizes
+            .write()
+            .unwrap()
+            .entry(depth)
+            .and_modify(|entry| entry[chunk_idx] = 0);
 
         self.write_sizes_to_disk();
     }
@@ -336,8 +339,10 @@ impl<'a> UpdateManager<'a> {
             self.locked_io.queue_deletion(file_path);
         }
 
-        let mut lock = self.sizes.write().unwrap();
-        lock.entry(depth)
+        self.sizes
+            .write()
+            .unwrap()
+            .entry(depth)
             .and_modify(|entry| entry[chunk_idx] = entry[chunk_idx].saturating_sub(bytes_deleted));
 
         self.write_sizes_to_disk();
