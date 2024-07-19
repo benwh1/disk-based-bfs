@@ -277,28 +277,30 @@ impl<'a> UpdateManager<'a> {
     }
 
     fn put(&self, block: FilledUpdateBlock) {
+        let bytes = block.updates.len() as u64 * 4;
+        let depth = block.depth;
+        let chunk_idx = block.chunk_idx;
+
         self.update_blocks.lock().unwrap().put(block);
+
+        // Update the size in memory. We haven't actually written to disk yet, but it isn't
+        // important that the sizes *exactly* match the size on disk.
+        self.sizes
+            .write()
+            .unwrap()
+            .entry(depth)
+            .and_modify(|entry| entry[chunk_idx] += bytes)
+            .or_insert_with(|| {
+                let mut v = vec![0; self.settings.num_array_chunks()];
+                v[chunk_idx] = bytes;
+                v
+            });
+
+        self.write_sizes_to_disk();
     }
 
     fn flush(&self) {
-        let mut update_blocks_lock = self.update_blocks.lock().unwrap();
-        let mut sizes_lock = self.sizes.write().unwrap();
-
-        for block in &update_blocks_lock.filled_blocks {
-            let bytes = block.updates.len() as u64 * 4;
-            sizes_lock
-                .entry(block.depth)
-                .and_modify(|entry| entry[block.chunk_idx] += bytes)
-                .or_insert_with(|| vec![0; self.settings.num_array_chunks()]);
-        }
-
-        drop(sizes_lock);
-
-        update_blocks_lock.write_all();
-
-        drop(update_blocks_lock);
-
-        self.write_sizes_to_disk();
+        self.update_blocks.lock().unwrap().write_all();
     }
 
     fn delete_update_files(&self, depth: usize, chunk_idx: usize) {
@@ -313,6 +315,8 @@ impl<'a> UpdateManager<'a> {
 
         let mut lock = self.sizes.write().unwrap();
         lock.entry(depth).and_modify(|entry| entry[chunk_idx] = 0);
+
+        self.write_sizes_to_disk();
     }
 
     fn delete_used_update_files(&self, depth: usize, chunk_idx: usize) {
@@ -335,6 +339,8 @@ impl<'a> UpdateManager<'a> {
         let mut lock = self.sizes.write().unwrap();
         lock.entry(depth)
             .and_modify(|entry| entry[chunk_idx] = entry[chunk_idx].saturating_sub(bytes_deleted));
+
+        self.write_sizes_to_disk();
     }
 
     fn files_size(&self, depth: usize, chunk_idx: usize) -> u64 {
@@ -1153,9 +1159,6 @@ impl<
                             // Put the chunk buffer back
                             self.chunk_buffers.put(chunk_buffer);
 
-                            // Write new update file sizes to disk
-                            self.update_file_manager.write_sizes_to_disk();
-
                             *lock.lock().unwrap() = true;
                             cvar.notify_one();
                             continue;
@@ -1205,9 +1208,6 @@ impl<
 
                             // Put the chunk buffer back
                             self.chunk_buffers.put(chunk_buffer);
-
-                            // Write new update file sizes to disk
-                            self.update_file_manager.write_sizes_to_disk();
 
                             *lock.lock().unwrap() = true;
                             cvar.notify_one();
