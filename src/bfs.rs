@@ -251,9 +251,7 @@ impl<'a> UpdateManager<'a> {
     fn try_read_sizes_from_disk(&self) {
         let path = self.settings.update_files_size_file_path();
 
-        let Some(str) = self.locked_io.try_read_to_string(&path) else {
-            return;
-        };
+        let str = self.locked_io.try_read_to_string(&path).unwrap();
         let hashmap = serde_json::from_str(&str).unwrap();
 
         let mut lock = self.sizes.write().unwrap();
@@ -437,7 +435,7 @@ impl<
 
     fn read_state(&self) -> Option<State> {
         let file_path = self.settings.state_file_path();
-        let str = self.locked_io.try_read_to_string(&file_path)?;
+        let str = self.locked_io.try_read_to_string(&file_path).ok()?;
         serde_json::from_str(&str).ok()
     }
 
@@ -450,7 +448,11 @@ impl<
     fn try_read_chunk(&self, chunk_buffer: &mut [u8], depth: usize, chunk_idx: usize) -> bool {
         let file_path = self.settings.chunk_file_path(depth, chunk_idx);
 
-        if !self.locked_io.try_read_file(&file_path, chunk_buffer) {
+        if self
+            .locked_io
+            .try_read_file(&file_path, chunk_buffer)
+            .is_err()
+        {
             return false;
         }
 
@@ -470,7 +472,11 @@ impl<
     ) -> bool {
         let file_path = self.settings.update_array_file_path(depth, chunk_idx);
 
-        if !self.locked_io.try_read_file(&file_path, update_buffer) {
+        if self
+            .locked_io
+            .try_read_file(&file_path, update_buffer)
+            .is_err()
+        {
             return false;
         }
 
@@ -547,7 +553,7 @@ impl<
         let file_path = self.exhausted_chunk_file_path(chunk_idx);
         let mut buf = [0u8; std::mem::size_of::<usize>()];
 
-        if !self.locked_io.try_read_file(&file_path, &mut buf) {
+        if self.locked_io.try_read_file(&file_path, &mut buf).is_err() {
             return None;
         }
 

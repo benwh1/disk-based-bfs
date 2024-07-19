@@ -5,7 +5,21 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
+use thiserror::Error;
+
 use crate::settings::BfsSettings;
+
+#[derive(Debug, Error)]
+pub enum Error<'a> {
+    #[error("FileNotOnDisk: path {0:?} not on disk")]
+    FileNotOnDisk(&'a Path),
+
+    #[error("FileNotOnAnyDisk: path {0:?} not on any disk")]
+    FileNotOnAnyDisk(&'a Path),
+
+    #[error("IoError: {0}")]
+    IoError(#[from] std::io::Error),
+}
 
 pub struct LockedDisk<'a> {
     settings: &'a BfsSettings,
@@ -34,56 +48,60 @@ impl<'a> LockedDisk<'a> {
         }
     }
 
-    pub fn try_read_file(&self, path: &Path, buf: &mut [u8]) -> Option<()> {
+    pub fn try_read_file<'b>(&self, path: &'b Path, buf: &mut [u8]) -> Result<(), Error<'b>> {
         if !self.is_on_disk(path) {
-            return None;
+            return Err(Error::FileNotOnDisk(path));
         }
 
         let _lock = self.lock();
 
         tracing::info!("reading file {path:?}");
 
-        let mut file = File::open(&path).ok()?;
-        file.read_exact(buf).ok()?;
+        let mut file = File::open(&path)?;
+        file.read_exact(buf)?;
 
-        Some(())
+        Ok(())
     }
 
-    pub fn try_read_to_string(&self, path: &Path) -> Option<String> {
+    pub fn try_read_to_string<'b>(&self, path: &'b Path) -> Result<String, Error<'b>> {
         if !self.is_on_disk(path) {
-            return None;
+            return Err(Error::FileNotOnDisk(path));
         }
 
         let _lock = self.lock();
 
         tracing::info!("reading file {path:?}");
 
-        let mut file = File::open(&path).ok()?;
+        let mut file = File::open(&path)?;
         let mut buf = String::new();
-        file.read_to_string(&mut buf).ok()?;
+        file.read_to_string(&mut buf)?;
 
-        Some(buf)
+        Ok(buf)
     }
 
-    pub fn try_read_to_vec(&self, path: &Path) -> Option<Vec<u8>> {
+    pub fn try_read_to_vec<'b>(&self, path: &'b Path) -> Result<Vec<u8>, Error<'b>> {
         if !self.is_on_disk(path) {
-            return None;
+            return Err(Error::FileNotOnDisk(path));
         }
 
         let _lock = self.lock();
 
         tracing::info!("reading file {path:?}");
 
-        std::fs::read(&path).ok()
+        Ok(std::fs::read(&path)?)
     }
 
-    pub fn try_write_file(&self, path: &Path, data: &[u8]) -> Option<()> {
+    pub fn try_write_file<'b>(&self, path: &'b Path, data: &[u8]) -> Result<(), Error<'b>> {
         self.try_write_file_multiple_buffers(path, &[data])
     }
 
-    pub fn try_write_file_multiple_buffers(&self, path: &Path, data: &[&[u8]]) -> Option<()> {
+    pub fn try_write_file_multiple_buffers<'b>(
+        &self,
+        path: &'b Path,
+        data: &[&[u8]],
+    ) -> Result<(), Error<'b>> {
         if !self.is_on_disk(path) {
-            return None;
+            return Err(Error::FileNotOnDisk(path));
         }
 
         let _lock = self.lock();
@@ -91,30 +109,30 @@ impl<'a> LockedDisk<'a> {
         tracing::info!("writing file {path:?}");
 
         let path_tmp = path.with_extension("tmp");
-        let mut file = File::create(&path_tmp).ok()?;
+        let mut file = File::create(&path_tmp)?;
         for data in data {
-            file.write_all(data).ok()?;
+            file.write_all(data)?;
         }
 
         drop(file);
 
-        std::fs::rename(path_tmp, path).ok()?;
+        std::fs::rename(path_tmp, path)?;
 
-        Some(())
+        Ok(())
     }
 
-    fn try_delete_file(&self, path: &PathBuf) -> Option<()> {
+    fn try_delete_file<'b>(&self, path: &'b Path) -> Result<(), Error<'b>> {
         if !self.is_on_disk(path) {
-            return None;
+            return Err(Error::FileNotOnDisk(path));
         }
 
         let _lock = self.lock();
 
         tracing::info!("deleting file {path:?}");
 
-        std::fs::remove_file(path).ok()?;
+        std::fs::remove_file(path)?;
 
-        Some(())
+        Ok(())
     }
 }
 
@@ -142,86 +160,88 @@ impl<'a> LockedIO<'a> {
         self.disks.len()
     }
 
-    pub fn try_read_file(&self, path: &Path, buf: &mut [u8]) -> bool {
+    pub fn try_read_file<'b>(&self, path: &'b Path, buf: &mut [u8]) -> Result<(), Error<'b>> {
         for disk in &self.disks {
-            if disk.try_read_file(path, buf).is_some() {
-                return true;
+            let result = disk.try_read_file(path, buf);
+            match result {
+                Err(Error::FileNotOnDisk(_)) => continue,
+                _ => return result,
             }
         }
 
-        false
+        Err(Error::FileNotOnAnyDisk(path))
     }
 
-    pub fn try_read_to_string(&self, path: &Path) -> Option<String> {
+    pub fn try_read_to_string<'b>(&self, path: &'b Path) -> Result<String, Error<'b>> {
         for disk in &self.disks {
-            if let Some(str) = disk.try_read_to_string(path) {
-                return Some(str);
+            let result = disk.try_read_to_string(path);
+            match result {
+                Err(Error::FileNotOnDisk(_)) => continue,
+                _ => return result,
             }
         }
 
-        None
+        Err(Error::FileNotOnAnyDisk(path))
     }
 
-    pub fn try_read_to_vec(&self, path: &Path) -> Option<Vec<u8>> {
+    pub fn try_read_to_vec<'b>(&self, path: &'b Path) -> Result<Vec<u8>, Error<'b>> {
         for disk in &self.disks {
-            if let Some(vec) = disk.try_read_to_vec(path) {
-                return Some(vec);
+            let result = disk.try_read_to_vec(path);
+            match result {
+                Err(Error::FileNotOnDisk(_)) => continue,
+                _ => return result,
             }
         }
 
-        None
+        Err(Error::FileNotOnAnyDisk(path))
     }
 
-    pub fn try_write_file(&self, path: &Path, data: &[u8]) -> bool {
+    pub fn try_write_file<'b>(&self, path: &'b Path, data: &[u8]) -> Result<(), Error<'b>> {
         for disk in &self.disks {
-            if disk.try_write_file(path, data).is_some() {
-                return true;
+            let result = disk.try_write_file(path, data);
+            match result {
+                Err(Error::FileNotOnDisk(_)) => continue,
+                _ => return result,
             }
         }
 
-        false
+        Err(Error::FileNotOnAnyDisk(path))
     }
 
-    pub fn try_write_file_multiple_buffers(&self, path: &Path, data: &[&[u8]]) -> bool {
+    pub fn try_write_file_multiple_buffers<'b>(
+        &self,
+        path: &'b Path,
+        data: &[&[u8]],
+    ) -> Result<(), Error<'b>> {
         for disk in &self.disks {
-            if disk.try_write_file_multiple_buffers(path, data).is_some() {
-                return true;
+            let result = disk.try_write_file_multiple_buffers(path, data);
+            match result {
+                Err(Error::FileNotOnDisk(_)) => continue,
+                _ => return result,
             }
         }
 
-        false
+        Err(Error::FileNotOnAnyDisk(path))
     }
 
-    pub fn read_file(&self, path: &Path, buf: &mut [u8]) {
-        if !self.try_read_file(path, buf) {
-            panic!("file path {path:?} not on any disk");
-        }
+    pub fn read_file<'b>(&self, path: &'b Path, buf: &mut [u8]) {
+        self.try_read_file(path, buf).unwrap();
     }
 
     pub fn read_to_string(&self, path: &Path) -> String {
-        match self.try_read_to_string(path) {
-            Some(str) => str,
-            None => panic!("file path {path:?} not on any disk"),
-        }
+        self.try_read_to_string(path).unwrap()
     }
 
     pub fn read_to_vec(&self, path: &Path) -> Vec<u8> {
-        match self.try_read_to_vec(path) {
-            Some(vec) => vec,
-            None => panic!("file path {path:?} not on any disk"),
-        }
+        self.try_read_to_vec(path).unwrap()
     }
 
     pub fn write_file(&self, path: &Path, data: &[u8]) {
-        if !self.try_write_file(path, data) {
-            panic!("file path {path:?} not on any disk");
-        }
+        self.try_write_file(path, data).unwrap();
     }
 
     pub fn write_file_multiple_buffers(&self, path: &Path, data: &[&[u8]]) {
-        if !self.try_write_file_multiple_buffers(path, data) {
-            panic!("file path {path:?} not on any disk");
-        }
+        self.try_write_file_multiple_buffers(path, data).unwrap();
     }
 
     pub fn queue_deletion(&self, path: PathBuf) {
@@ -237,7 +257,11 @@ impl<'a> LockedIO<'a> {
 
             for path in deletion_queue_lock.drain(..) {
                 for disk in &self.disks {
-                    disk.try_delete_file(&path);
+                    let result = disk.try_delete_file(&path);
+                    match result {
+                        Err(Error::FileNotOnDisk(_)) => continue,
+                        _ => break,
+                    }
                 }
             }
         }
