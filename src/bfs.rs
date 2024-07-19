@@ -571,7 +571,7 @@ impl<
             let ext = path.extension().and_then(|ext| ext.to_str());
             // Look for "used" as well, in case we restart the program while this loop is
             // running and need to re-read all the update files
-            ext == Some("dat") || ext == Some("used")
+            ext.is_none() || ext == Some("used")
         }) {
             let bytes = self.locked_io.read_to_vec(&file_path);
             assert_eq!(bytes.len() % 4, 0);
