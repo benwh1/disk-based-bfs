@@ -1143,9 +1143,12 @@ impl<
                             // Get a chunk buffer
                             let mut chunk_buffer = self.chunk_buffers.take().unwrap();
 
+                            let used_space = self.update_file_manager.files_size(depth + 2, chunk_idx);
+                            let gb = used_space as f64 / (1 << 30) as f64;
+
                             // Compress the update files
                             tracing::info!(
-                                "[Thread {t}] compressing update files for depth {} -> {} chunk {chunk_idx}",
+                                "[Thread {t}] compressing {gb} GiB of update files for depth {} -> {} chunk {chunk_idx}",
                                 depth + 1,
                                 depth + 2,
                             );
