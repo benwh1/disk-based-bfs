@@ -1116,7 +1116,7 @@ impl<
                                 return None;
                             }
 
-                            let used_space = self.update_file_manager.files_size(depth+2, i);
+                            let used_space = self.update_file_manager.files_size(depth + 2, i);
 
                             if used_space <= self.settings.update_files_compression_threshold {
                                 return None;
