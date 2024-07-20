@@ -77,30 +77,32 @@ impl<'a> UpdateManager<'a> {
             blocks.push(block);
 
             // Sum up the total number of bytes written across all calls to `take_impl`
-            for (depth, vec) in bytes_written {
-                total_bytes_written
+            if let Some(bytes_written) = bytes_written {
+                for (depth, vec) in bytes_written {
+                    total_bytes_written
+                        .entry(depth)
+                        .or_insert_with(|| vec![0; self.settings.num_array_chunks()])
+                        .iter_mut()
+                        .zip(vec.iter())
+                        .for_each(|(total, new)| *total += new);
+                }
+            }
+        }
+
+        if !total_bytes_written.is_empty() {
+            // Update `self.sizes` with the new bytes written
+            let mut sizes_lock = self.sizes.write().unwrap();
+            for (depth, vec) in total_bytes_written {
+                sizes_lock
                     .entry(depth)
                     .or_insert_with(|| vec![0; self.settings.num_array_chunks()])
                     .iter_mut()
                     .zip(vec.iter())
                     .for_each(|(total, new)| *total += new);
             }
+
+            self.write_sizes_to_disk();
         }
-
-        // Update `self.sizes` with the new bytes written
-        let mut sizes_lock = self.sizes.write().unwrap();
-        for (depth, vec) in total_bytes_written {
-            sizes_lock
-                .entry(depth)
-                .or_insert_with(|| vec![0; self.settings.num_array_chunks()])
-                .iter_mut()
-                .zip(vec.iter())
-                .for_each(|(total, new)| *total += new);
-        }
-
-        drop(sizes_lock);
-
-        self.write_sizes_to_disk();
 
         blocks
     }
@@ -187,18 +189,20 @@ impl<'a> UpdateManager<'a> {
         self.put(old);
 
         // Update `self.sizes` with the new bytes written
-        let mut sizes_lock = self.sizes.write().unwrap();
-        for (depth, vec) in bytes_written {
-            sizes_lock
-                .entry(depth)
-                .or_insert_with(|| vec![0; self.settings.num_array_chunks()])
-                .iter_mut()
-                .zip(vec.iter())
-                .for_each(|(total, new)| *total += new);
+        if let Some(bytes_written) = bytes_written {
+            let mut sizes_lock = self.sizes.write().unwrap();
+            for (depth, vec) in bytes_written {
+                sizes_lock
+                    .entry(depth)
+                    .or_insert_with(|| vec![0; self.settings.num_array_chunks()])
+                    .iter_mut()
+                    .zip(vec.iter())
+                    .for_each(|(total, new)| *total += new);
+            }
+
+            drop(sizes_lock);
+
+            self.write_sizes_to_disk();
         }
-
-        drop(sizes_lock);
-
-        self.write_sizes_to_disk();
     }
 }

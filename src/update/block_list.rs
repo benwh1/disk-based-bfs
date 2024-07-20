@@ -122,7 +122,7 @@ impl<'a> UpdateBlockList<'a> {
     pub(super) fn take_impl(
         &mut self,
         log: bool,
-    ) -> (AvailableUpdateBlock, HashMap<usize, Vec<u64>>) {
+    ) -> (AvailableUpdateBlock, Option<HashMap<usize, Vec<u64>>>) {
         if log {
             tracing::debug!(
                 "taking update block, {} blocks remaining",
@@ -131,16 +131,16 @@ impl<'a> UpdateBlockList<'a> {
         }
 
         if let Some(block) = self.available_blocks.pop() {
-            return (block, HashMap::new());
+            return (block, None);
         }
 
         let bytes_written = self.write_all();
 
         // All blocks will be available now
-        (self.available_blocks.pop().unwrap(), bytes_written)
+        (self.available_blocks.pop().unwrap(), Some(bytes_written))
     }
 
-    pub(super) fn take(&mut self) -> (AvailableUpdateBlock, HashMap<usize, Vec<u64>>) {
+    pub(super) fn take(&mut self) -> (AvailableUpdateBlock, Option<HashMap<usize, Vec<u64>>>) {
         self.take_impl(true)
     }
 
