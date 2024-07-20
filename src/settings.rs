@@ -13,6 +13,7 @@ pub struct BfsSettingsBuilder {
     buf_io_capacity: Option<usize>,
     use_locked_io: Option<bool>,
     sync_filesystem: Option<bool>,
+    compress_update_files_at_end_of_iter: Option<bool>,
 }
 
 impl Default for BfsSettingsBuilder {
@@ -36,6 +37,7 @@ impl BfsSettingsBuilder {
             buf_io_capacity: None,
             use_locked_io: None,
             sync_filesystem: None,
+            compress_update_files_at_end_of_iter: None,
         }
     }
 
@@ -105,6 +107,11 @@ impl BfsSettingsBuilder {
         self
     }
 
+    pub fn compress_update_files_at_end_of_iter(mut self, compress: bool) -> Self {
+        self.compress_update_files_at_end_of_iter = Some(compress);
+        self
+    }
+
     pub fn build(self) -> Option<BfsSettings> {
         // Require that all chunks are the same size
         let chunk_size_bytes = self.chunk_size_bytes?;
@@ -126,6 +133,7 @@ impl BfsSettingsBuilder {
             buf_io_capacity: self.buf_io_capacity?,
             use_locked_io: self.use_locked_io?,
             sync_filesystem: self.sync_filesystem?,
+            compress_update_files_at_end_of_iter: self.compress_update_files_at_end_of_iter?,
         })
     }
 }
@@ -143,6 +151,7 @@ pub struct BfsSettings {
     pub(crate) buf_io_capacity: usize,
     pub(crate) use_locked_io: bool,
     pub(crate) sync_filesystem: bool,
+    pub(crate) compress_update_files_at_end_of_iter: bool,
 }
 
 impl BfsSettings {

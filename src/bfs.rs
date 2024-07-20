@@ -1023,7 +1023,9 @@ impl<
         let new = *new_states.lock().unwrap();
         tracing::info!("depth {} new {new}", depth + 1);
 
-        self.compress_all_update_files(depth + 2);
+        if self.settings.compress_update_files_at_end_of_iter {
+            self.compress_all_update_files(depth + 2);
+        }
 
         self.write_state(State::Cleanup { depth });
         self.end_of_depth_cleanup(depth);
