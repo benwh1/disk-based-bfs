@@ -729,12 +729,9 @@ impl<
         &self,
         chunk_buffer: &mut [u8],
         create_chunk_hashsets: Option<&[&HashSet<u64>]>,
-        thread: usize,
         depth: usize,
         chunk_idx: usize,
     ) -> u64 {
-        let t = thread;
-
         if let Some(d) = self.chunk_exhausted_depth(chunk_idx) {
             // If d > depth, then we must have written the exhausted file, and then the program was
             // terminated before we could delete the chunk file, and we are now re-processing the
@@ -1009,7 +1006,6 @@ impl<
                                 let chunk_new = self.process_chunk(
                                     &mut chunk_buffer,
                                     create_chunk_hashsets,
-                                    t,
                                     depth,
                                     chunk_idx,
                                 );
