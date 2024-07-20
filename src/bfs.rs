@@ -833,7 +833,7 @@ impl<
 
                             // Compress the update files
                             tracing::info!(
-                                "[Thread {t}] compressing {gb} GiB of update files for depth {} -> {} chunk {chunk_idx}",
+                                "[Thread {t}] compressing {gb:.3} GiB of update files for depth {} -> {} chunk {chunk_idx}",
                                 depth + 1,
                                 depth + 2,
                             );
