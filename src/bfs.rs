@@ -593,9 +593,10 @@ impl<
 
         for &val in next {
             let (chunk_idx, chunk_offset) = self.node_to_chunk_coords(val);
-            update_files[chunk_idx]
+            let bytes_written = update_files[chunk_idx]
                 .write(&chunk_offset.to_le_bytes())
                 .unwrap();
+            assert_eq!(bytes_written, 4);
         }
     }
 

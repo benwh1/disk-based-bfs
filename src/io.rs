@@ -57,7 +57,7 @@ impl<'a> LockedDisk<'a> {
 
         tracing::trace!("reading file {path:?}");
 
-        let mut file = File::open(&path)?;
+        let mut file = File::open(path)?;
         file.read_exact(buf)?;
 
         Ok(())
@@ -72,7 +72,7 @@ impl<'a> LockedDisk<'a> {
 
         tracing::trace!("reading file {path:?}");
 
-        let mut file = File::open(&path)?;
+        let mut file = File::open(path)?;
         let mut buf = String::new();
         file.read_to_string(&mut buf)?;
 
@@ -88,7 +88,7 @@ impl<'a> LockedDisk<'a> {
 
         tracing::trace!("reading file {path:?}");
 
-        Ok(std::fs::read(&path)?)
+        Ok(std::fs::read(path)?)
     }
 
     pub fn try_write_file<'b>(&self, path: &'b Path, data: &[u8]) -> Result<(), Error<'b>> {
@@ -236,7 +236,7 @@ impl<'a> LockedIO<'a> {
         Err(Error::FileNotOnAnyDisk(path))
     }
 
-    pub fn read_file<'b>(&self, path: &'b Path, buf: &mut [u8]) {
+    pub fn read_file(&self, path: &Path, buf: &mut [u8]) {
         self.try_read_file(path, buf)
             .map_err(|e| panic!("failed to read file: {e}"))
             .unwrap();
