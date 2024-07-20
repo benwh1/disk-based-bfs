@@ -237,12 +237,26 @@ impl<
             return;
         };
 
-        for file_path in read_dir.flatten().map(|entry| entry.path()).filter(|path| {
-            let ext = path.extension().and_then(|ext| ext.to_str());
-            // Look for "used" as well, in case we restart the program while this loop is
-            // running and need to re-read all the update files
-            ext.is_none() || ext == Some("used")
-        }) {
+        // Mark "used" files as unused, in case we restart the program while this loop is running
+        // and need to re-read all the update files
+        for file_path in read_dir
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("used"))
+        {
+            let file_path_unused = file_path.with_extension("");
+            std::fs::rename(file_path, file_path_unused).unwrap();
+        }
+
+        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
+            return;
+        };
+
+        for file_path in read_dir
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_none())
+        {
             let bytes = self.locked_io.read_to_vec(&file_path);
             assert_eq!(bytes.len() % 4, 0);
 
