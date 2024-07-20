@@ -256,10 +256,6 @@ impl<'a> LockedIO<'a> {
         self.try_write_file_multiple_buffers(path, data).unwrap();
     }
 
-    fn delete_file(&self, path: &Path) {
-        self.try_delete_file(path).unwrap();
-    }
-
     pub fn queue_deletion(&self, path: PathBuf) {
         let mut deletion_queue_lock = self.deletion_queue.lock().expect("failed to acquire lock");
         deletion_queue_lock.push(path);
@@ -274,7 +270,9 @@ impl<'a> LockedIO<'a> {
             tracing::debug!("flushing deletion queue ({num_files} files)");
 
             for path in deletion_queue_lock.drain(..) {
-                self.delete_file(&path);
+                // It's possible that the file has already been deleted, e.g. by an end of depth
+                // cleanup. It's not important if deleting a file fails, so ignore the result.
+                _ = self.try_delete_file(&path);
             }
 
             tracing::debug!("finished flushing deletion queue");
