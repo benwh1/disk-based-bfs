@@ -237,23 +237,33 @@ impl<'a> LockedIO<'a> {
     }
 
     pub fn read_file<'b>(&self, path: &'b Path, buf: &mut [u8]) {
-        self.try_read_file(path, buf).unwrap();
+        self.try_read_file(path, buf)
+            .map_err(|e| panic!("failed to read file: {e}"))
+            .unwrap();
     }
 
     pub fn read_to_string(&self, path: &Path) -> String {
-        self.try_read_to_string(path).unwrap()
+        self.try_read_to_string(path)
+            .map_err(|e| panic!("failed to read file to string: {e}"))
+            .unwrap()
     }
 
     pub fn read_to_vec(&self, path: &Path) -> Vec<u8> {
-        self.try_read_to_vec(path).unwrap()
+        self.try_read_to_vec(path)
+            .map_err(|e| panic!("failed to read file to vec: {e}"))
+            .unwrap()
     }
 
     pub fn write_file(&self, path: &Path, data: &[u8]) {
-        self.try_write_file(path, data).unwrap();
+        self.try_write_file(path, data)
+            .map_err(|e| panic!("failed to write file: {e}"))
+            .unwrap();
     }
 
     pub fn write_file_multiple_buffers(&self, path: &Path, data: &[&[u8]]) {
-        self.try_write_file_multiple_buffers(path, data).unwrap();
+        self.try_write_file_multiple_buffers(path, data)
+            .map_err(|e| panic!("failed to write file: {e}"))
+            .unwrap();
     }
 
     pub fn queue_deletion(&self, path: PathBuf) {
