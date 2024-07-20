@@ -227,6 +227,15 @@ impl<
     }
 
     fn compress_update_files(&self, update_buffer: &mut [u8], depth: usize, chunk_idx: usize) {
+        let used_space = self.update_file_manager.files_size(depth, chunk_idx);
+        let gb = used_space as f64 / (1 << 30) as f64;
+
+        tracing::info!(
+            "compressing {gb:.3} GiB of update files for depth {} -> {} chunk {chunk_idx}",
+            depth - 1,
+            depth,
+        );
+
         // If there is already an update array file, read it into the buffer first so we don't
         // overwrite the old array. Otherwise, just fill with zeros.
         if !self.try_read_update_array(update_buffer, depth, chunk_idx) {
@@ -278,6 +287,12 @@ impl<
         self.write_update_array(update_buffer, depth, chunk_idx);
         self.update_file_manager
             .delete_used_update_files(depth, chunk_idx);
+
+        tracing::info!(
+            "finished compressing update files for depth {} -> {} chunk {chunk_idx}",
+            depth - 1,
+            depth,
+        );
     }
 
     fn compress_all_update_files(&self, depth: usize) {
@@ -345,21 +360,7 @@ impl<
                                 // Get a chunk buffer
                                 let mut chunk_buffer = self.chunk_buffers.take().unwrap();
 
-                                let used_space = self.update_file_manager.files_size(depth, chunk_idx);
-                                let gb = used_space as f64 / (1 << 30) as f64;
-
-                                // Compress the update files
-                                tracing::info!(
-                                    "compressing {gb:.3} GiB of update files for depth {} -> {} chunk {chunk_idx}",
-                                    depth - 1,
-                                    depth,
-                                );
                                 self.compress_update_files(&mut chunk_buffer, depth, chunk_idx);
-                                tracing::info!(
-                                    "finished compressing update files for depth {} -> {} chunk {chunk_idx}",
-                                    depth - 1,
-                                    depth,
-                                );
 
                                 // Put the chunk buffer back
                                 self.chunk_buffers.put(chunk_buffer);
@@ -386,7 +387,7 @@ impl<
             threads.into_iter().for_each(|t| t.join().unwrap());
         });
 
-        tracing::info!("finished compressing depth {depth} update files");
+        tracing::info!("finished compressing all depth {depth} update files");
     }
 
     fn update_and_expand_chunk(
@@ -757,7 +758,7 @@ impl<
 
         tracing::info!(
             "updating and expanding depth {depth} -> {} chunk {chunk_idx}",
-            depth + 1
+            depth + 1,
         );
         let new = self.update_and_expand_chunk(chunk_buffer, depth, chunk_idx);
         self.write_new_positions_data_file(new, depth + 1, chunk_idx);
@@ -780,14 +781,14 @@ impl<
 
         tracing::debug!(
             "deleting update files for depth {depth} -> {} chunk {chunk_idx}",
-            depth + 1
+            depth + 1,
         );
         self.update_file_manager
             .delete_update_files(depth + 1, chunk_idx);
 
         tracing::debug!(
             "deleting update array for depth {depth} -> {} chunk {chunk_idx}",
-            depth + 1
+            depth + 1,
         );
         self.delete_update_array(depth + 1, chunk_idx);
 
@@ -811,7 +812,7 @@ impl<
 
             tracing::debug!(
                 "deleting root directory {root_idx} depth {} update files",
-                depth + 1
+                depth + 1,
             );
             let dir_path = self.settings.update_depth_dir_path(depth + 1, root_idx);
             if dir_path.exists() {
@@ -820,7 +821,7 @@ impl<
 
             tracing::debug!(
                 "deleting root directory {root_idx} depth {} update arrays",
-                depth + 1
+                depth + 1,
             );
             let dir_path = self.settings.update_array_dir_path(depth + 1, root_idx);
             if dir_path.exists() {
@@ -941,21 +942,7 @@ impl<
                                 // Get a chunk buffer
                                 let mut chunk_buffer = self.chunk_buffers.take().unwrap();
 
-                                let used_space = self.update_file_manager.files_size(depth + 2, chunk_idx);
-                                let gb = used_space as f64 / (1 << 30) as f64;
-
-                                // Compress the update files
-                                tracing::info!(
-                                    "compressing {gb:.3} GiB of update files for depth {} -> {} chunk {chunk_idx}",
-                                    depth + 1,
-                                    depth + 2,
-                                );
                                 self.compress_update_files(&mut chunk_buffer, depth + 2, chunk_idx);
-                                tracing::info!(
-                                    "finished compressing update files for depth {} -> {} chunk {chunk_idx}",
-                                    depth + 1,
-                                    depth + 2,
-                                );
 
                                 // Set the state back to not compressing
                                 let mut update_file_states_write = update_file_states.write().unwrap();
@@ -995,7 +982,6 @@ impl<
                                 let mut chunk_buffer = self.chunk_buffers.take().unwrap();
 
                                 // Process the chunk
-                                tracing::debug!("processing depth {depth} chunk {chunk_idx}");
                                 let chunk_new = self.process_chunk(
                                     &mut chunk_buffer,
                                     create_chunk_hashsets,
@@ -1003,7 +989,6 @@ impl<
                                     depth,
                                     chunk_idx,
                                 );
-                                tracing::debug!("finished processing depth {depth} chunk {chunk_idx}");
 
                                 *new_states.lock().unwrap() += chunk_new;
 
@@ -1033,7 +1018,6 @@ impl<
             threads.into_iter().for_each(|t| t.join().unwrap());
         });
 
-        tracing::debug!("flushing remaining update files");
         self.update_file_manager.flush();
 
         let new = *new_states.lock().unwrap();

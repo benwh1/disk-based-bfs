@@ -64,7 +64,7 @@ impl<'a> UpdateManager<'a> {
     pub fn take_n(&self, n: usize) -> Vec<AvailableUpdateBlock> {
         let mut update_blocks_lock = self.update_blocks.lock().unwrap();
 
-        tracing::debug!(
+        tracing::trace!(
             "taking {n} update blocks, {} blocks remaining",
             update_blocks_lock.num_available_blocks(),
         );
@@ -112,6 +112,8 @@ impl<'a> UpdateManager<'a> {
     }
 
     pub fn flush(&self) {
+        tracing::info!("flushing update files");
+
         let bytes_written = self.update_blocks.lock().unwrap().write_all();
 
         let mut sizes_lock = self.sizes.write().unwrap();
@@ -127,6 +129,8 @@ impl<'a> UpdateManager<'a> {
         drop(sizes_lock);
 
         self.write_sizes_to_disk();
+
+        tracing::info!("finished flushing update files");
     }
 
     fn delete_update_files_impl(&self, depth: usize, chunk_idx: usize, delete_used_only: bool) {
@@ -178,7 +182,7 @@ impl<'a> UpdateManager<'a> {
         depth: usize,
         chunk_idx: usize,
     ) {
-        tracing::debug!(
+        tracing::trace!(
             "marking update block as filled, contains {}/{} values",
             upd.len(),
             upd.capacity(),

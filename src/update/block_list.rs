@@ -128,7 +128,7 @@ impl<'a> UpdateBlockList<'a> {
         log: bool,
     ) -> (AvailableUpdateBlock, Option<HashMap<usize, Vec<u64>>>) {
         if log {
-            tracing::debug!(
+            tracing::trace!(
                 "taking update block, {} blocks remaining",
                 self.available_blocks.len(),
             );
