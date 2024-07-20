@@ -333,21 +333,30 @@ impl<
 
                             // If everything is done, notify all and break
                             let update_file_states_read = update_file_states.read().unwrap();
-                            if update_file_states_read.iter().all(|&x| x == UpdateFileState::Compressed) {
+                            if update_file_states_read
+                                .iter()
+                                .all(|&x| x == UpdateFileState::Compressed)
+                            {
                                 *lock.lock().unwrap() = true;
                                 cvar.notify_all();
                                 break;
                             }
 
                             // Check for update files to compress
-                            let chunk_idx = update_file_states_read.iter().position(|&x| x == UpdateFileState::NotCompressing);
+                            let chunk_idx = update_file_states_read
+                                .iter()
+                                .position(|&x| x == UpdateFileState::NotCompressing);
                             drop(update_file_states_read);
 
                             if let Some(chunk_idx) = chunk_idx {
                                 // Set the state to currently compressing
-                                let mut update_file_states_write = update_file_states.write().unwrap();
-                                if update_file_states_write[chunk_idx] == UpdateFileState::NotCompressing {
-                                    update_file_states_write[chunk_idx] = UpdateFileState::CurrentlyCompressing;
+                                let mut update_file_states_write =
+                                    update_file_states.write().unwrap();
+                                if update_file_states_write[chunk_idx]
+                                    == UpdateFileState::NotCompressing
+                                {
+                                    update_file_states_write[chunk_idx] =
+                                        UpdateFileState::CurrentlyCompressing;
                                 } else {
                                     // Another thread got here first
                                     continue;
@@ -366,7 +375,8 @@ impl<
                                 self.chunk_buffers.put(chunk_buffer);
 
                                 // Mark the update files as compressed
-                                let mut update_file_states_write = update_file_states.write().unwrap();
+                                let mut update_file_states_write =
+                                    update_file_states.write().unwrap();
                                 update_file_states_write[chunk_idx] = UpdateFileState::Compressed;
                                 drop(update_file_states_write);
 
@@ -895,7 +905,10 @@ impl<
 
                             // If everything is done, notify all and break
                             let chunk_states_read = chunk_states.read().unwrap();
-                            if chunk_states_read.iter().all(|&state| state == ChunkState::Expanded) {
+                            if chunk_states_read
+                                .iter()
+                                .all(|&state| state == ChunkState::Expanded)
+                            {
                                 *lock.lock().unwrap() = true;
                                 cvar.notify_all();
                                 break;
@@ -904,32 +917,41 @@ impl<
 
                             // Check for update files to compress
                             let update_file_states_read = update_file_states.read().unwrap();
-                            let chunk_idx = update_file_states_read.iter().enumerate().find_map(|(i, state)| {
-                                if *state == UpdateFileState::CurrentlyCompressing {
-                                    return None;
-                                }
+                            let chunk_idx = update_file_states_read.iter().enumerate().find_map(
+                                |(i, state)| {
+                                    if *state == UpdateFileState::CurrentlyCompressing {
+                                        return None;
+                                    }
 
-                                let path = self.settings.update_chunk_dir_path(depth + 2, i);
+                                    let path = self.settings.update_chunk_dir_path(depth + 2, i);
 
-                                if !path.exists() {
-                                    return None;
-                                }
+                                    if !path.exists() {
+                                        return None;
+                                    }
 
-                                let used_space = self.update_file_manager.files_size(depth + 2, i);
+                                    let used_space =
+                                        self.update_file_manager.files_size(depth + 2, i);
 
-                                if used_space <= self.settings.update_files_compression_threshold {
-                                    return None;
-                                }
+                                    if used_space
+                                        <= self.settings.update_files_compression_threshold
+                                    {
+                                        return None;
+                                    }
 
-                                Some(i)
-                            });
+                                    Some(i)
+                                },
+                            );
                             drop(update_file_states_read);
 
                             if let Some(chunk_idx) = chunk_idx {
                                 // Set the state to currently compressing
-                                let mut update_file_states_write = update_file_states.write().unwrap();
-                                if update_file_states_write[chunk_idx] == UpdateFileState::NotCompressing {
-                                    update_file_states_write[chunk_idx] = UpdateFileState::CurrentlyCompressing;
+                                let mut update_file_states_write =
+                                    update_file_states.write().unwrap();
+                                if update_file_states_write[chunk_idx]
+                                    == UpdateFileState::NotCompressing
+                                {
+                                    update_file_states_write[chunk_idx] =
+                                        UpdateFileState::CurrentlyCompressing;
                                 } else {
                                     // Another thread got here first
                                     continue;
@@ -945,8 +967,10 @@ impl<
                                 self.compress_update_files(&mut chunk_buffer, depth + 2, chunk_idx);
 
                                 // Set the state back to not compressing
-                                let mut update_file_states_write = update_file_states.write().unwrap();
-                                update_file_states_write[chunk_idx] = UpdateFileState::NotCompressing;
+                                let mut update_file_states_write =
+                                    update_file_states.write().unwrap();
+                                update_file_states_write[chunk_idx] =
+                                    UpdateFileState::NotCompressing;
                                 drop(update_file_states_write);
 
                                 // Put the chunk buffer back
@@ -959,9 +983,9 @@ impl<
 
                             // Check for chunks to expand
                             let chunk_states_read = chunk_states.read().unwrap();
-                            let chunk_idx = chunk_states_read.iter().position(|&state| {
-                                state == ChunkState::NotExpanded
-                            });
+                            let chunk_idx = chunk_states_read
+                                .iter()
+                                .position(|&state| state == ChunkState::NotExpanded);
                             drop(chunk_states_read);
 
                             if let Some(chunk_idx) = chunk_idx {
