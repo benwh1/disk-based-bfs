@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    thread::Builder as ThreadBuilder,
 };
 
 use rand::distributions::{Alphanumeric, DistString as _};
@@ -59,48 +60,51 @@ impl<'a> UpdateBlockList<'a> {
         let num_disks = self.locked_io.num_disks();
         std::thread::scope(|s| {
             (0..num_disks)
-                .map(|thread| {
+                .map(|t| {
                     let filled_blocks = &self.filled_blocks;
                     let settings = self.settings;
                     let locked_io = self.locked_io;
 
                     let bytes_written = bytes_written.clone();
 
-                    s.spawn(move || {
-                        for chunk in filled_blocks
-                            .chunk_by(|b1, b2| {
-                                (b1.depth(), b1.chunk_idx()) == (b2.depth(), b2.chunk_idx())
-                            })
-                            .filter(|chunk| chunk[0].chunk_idx() % num_disks == thread)
-                        {
-                            let depth = chunk[0].depth();
-                            let chunk_idx = chunk[0].chunk_idx();
+                    ThreadBuilder::new()
+                        .name(format!("write-update-blocks-{t}"))
+                        .spawn_scoped(s, move || {
+                            for chunk in filled_blocks
+                                .chunk_by(|b1, b2| {
+                                    (b1.depth(), b1.chunk_idx()) == (b2.depth(), b2.chunk_idx())
+                                })
+                                .filter(|chunk| chunk[0].chunk_idx() % num_disks == t)
+                            {
+                                let depth = chunk[0].depth();
+                                let chunk_idx = chunk[0].chunk_idx();
 
-                            let dir_path = settings.update_chunk_dir_path(depth, chunk_idx);
-                            std::fs::create_dir_all(&dir_path).unwrap();
+                                let dir_path = settings.update_chunk_dir_path(depth, chunk_idx);
+                                std::fs::create_dir_all(&dir_path).unwrap();
 
-                            let mut rng = rand::thread_rng();
-                            let file_name = Alphanumeric.sample_string(&mut rng, 16);
-                            let file_path = dir_path.join(file_name);
+                                let mut rng = rand::thread_rng();
+                                let file_name = Alphanumeric.sample_string(&mut rng, 16);
+                                let file_path = dir_path.join(file_name);
 
-                            let buffers = chunk
-                                .iter()
-                                .map(|block| bytemuck::cast_slice(block.updates()))
-                                .collect::<Vec<_>>();
+                                let buffers = chunk
+                                    .iter()
+                                    .map(|block| bytemuck::cast_slice(block.updates()))
+                                    .collect::<Vec<_>>();
 
-                            let bytes_to_write =
-                                buffers.iter().map(|buf| buf.len() as u64).sum::<u64>();
+                                let bytes_to_write =
+                                    buffers.iter().map(|buf| buf.len() as u64).sum::<u64>();
 
-                            let mut bytes_written_lock = bytes_written.lock().unwrap();
-                            let sizes_for_depth = bytes_written_lock
-                                .entry(depth)
-                                .or_insert_with(|| vec![0; settings.num_array_chunks()]);
-                            sizes_for_depth[chunk_idx] += bytes_to_write;
-                            drop(bytes_written_lock);
+                                let mut bytes_written_lock = bytes_written.lock().unwrap();
+                                let sizes_for_depth = bytes_written_lock
+                                    .entry(depth)
+                                    .or_insert_with(|| vec![0; settings.num_array_chunks()]);
+                                sizes_for_depth[chunk_idx] += bytes_to_write;
+                                drop(bytes_written_lock);
 
-                            locked_io.write_file_multiple_buffers(&file_path, &buffers);
-                        }
-                    })
+                                locked_io.write_file_multiple_buffers(&file_path, &buffers);
+                            }
+                        })
+                        .unwrap()
                 })
                 .collect::<Vec<_>>()
                 .into_iter()
