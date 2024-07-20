@@ -89,6 +89,8 @@ impl<'a> UpdateManager<'a> {
             }
         }
 
+        drop(update_blocks_lock);
+
         if !total_bytes_written.is_empty() {
             // Update `self.sizes` with the new bytes written
             let mut sizes_lock = self.sizes.write().unwrap();
@@ -100,6 +102,8 @@ impl<'a> UpdateManager<'a> {
                     .zip(vec.iter())
                     .for_each(|(total, new)| *total += new);
             }
+
+            drop(sizes_lock);
 
             self.write_sizes_to_disk();
         }
