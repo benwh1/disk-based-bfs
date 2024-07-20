@@ -50,6 +50,10 @@ impl<'a> UpdateManager<'a> {
     pub fn try_read_sizes_from_disk(&self) {
         let path = self.settings.update_files_size_file_path();
 
+        if !path.exists() {
+            return;
+        }
+
         let str = self.locked_io.try_read_to_string(&path).unwrap();
         let hashmap = serde_json::from_str(&str).unwrap();
 
