@@ -360,6 +360,9 @@ impl<
 
                             // Put the chunk buffer back
                             self.chunk_buffers.put(chunk_buffer);
+
+                            *lock.lock().unwrap() = true;
+                            cvar.notify_one();
                         }
                     })
                 })
