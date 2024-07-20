@@ -361,6 +361,11 @@ impl<
                             // Put the chunk buffer back
                             self.chunk_buffers.put(chunk_buffer);
 
+                            // Mark the update files as compressed
+                            let mut update_file_states_write = update_file_states.write().unwrap();
+                            update_file_states_write[chunk_idx] = UpdateFileState::Compressed;
+                            drop(update_file_states_write);
+
                             *lock.lock().unwrap() = true;
                             cvar.notify_one();
                         }
