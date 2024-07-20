@@ -186,14 +186,14 @@ impl<
     fn delete_chunk_file(&self, depth: usize, chunk_idx: usize) {
         let file_path = self.settings.chunk_file_path(depth, chunk_idx);
         if file_path.exists() {
-            self.locked_io.queue_deletion(file_path);
+            self.locked_io.try_delete_file(&file_path).unwrap();
         }
     }
 
     fn delete_update_array(&self, depth: usize, chunk_idx: usize) {
         let file_path = self.settings.update_array_file_path(depth, chunk_idx);
         if file_path.exists() {
-            self.locked_io.queue_deletion(file_path);
+            self.locked_io.try_delete_file(&file_path).unwrap();
         }
     }
 

@@ -137,9 +137,7 @@ impl<'a> LockedDisk<'a> {
 }
 
 pub struct LockedIO<'a> {
-    settings: &'a BfsSettings,
     disks: Vec<LockedDisk<'a>>,
-    deletion_queue: Mutex<Vec<PathBuf>>,
 }
 
 impl<'a> LockedIO<'a> {
@@ -149,11 +147,7 @@ impl<'a> LockedIO<'a> {
             .map(|disk_path| LockedDisk::new(settings, disk_path))
             .collect();
 
-        Self {
-            settings,
-            disks,
-            deletion_queue: Mutex::new(Vec::new()),
-        }
+        Self { disks }
     }
 
     pub fn num_disks(&self) -> usize {
@@ -224,7 +218,7 @@ impl<'a> LockedIO<'a> {
         Err(Error::FileNotOnAnyDisk(path))
     }
 
-    fn try_delete_file<'b>(&self, path: &'b Path) -> Result<(), Error<'b>> {
+    pub fn try_delete_file<'b>(&self, path: &'b Path) -> Result<(), Error<'b>> {
         for disk in &self.disks {
             let result = disk.try_delete_file(path);
             match result {
@@ -264,29 +258,6 @@ impl<'a> LockedIO<'a> {
         self.try_write_file_multiple_buffers(path, data)
             .map_err(|e| panic!("failed to write file: {e}"))
             .unwrap();
-    }
-
-    pub fn queue_deletion(&self, path: PathBuf) {
-        let mut deletion_queue_lock = self.deletion_queue.lock().expect("failed to acquire lock");
-        deletion_queue_lock.push(path);
-
-        let num_files = deletion_queue_lock.len();
-
-        if num_files >= 256 {
-            if self.settings.sync_filesystem {
-                sync();
-            }
-
-            tracing::debug!("flushing deletion queue ({num_files} files)");
-
-            for path in deletion_queue_lock.drain(..) {
-                // It's possible that the file has already been deleted, e.g. by an end of depth
-                // cleanup. It's not important if deleting a file fails, so ignore the result.
-                _ = self.try_delete_file(&path);
-            }
-
-            tracing::debug!("finished flushing deletion queue");
-        }
     }
 }
 
