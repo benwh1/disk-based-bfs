@@ -149,19 +149,21 @@ impl<'a> UpdateManager<'a> {
             return;
         };
 
-        let mut bytes_deleted = 0;
-
         for path in read_dir.flatten().map(|entry| entry.path()) {
             if !delete_used_only || path.extension().and_then(|ext| ext.to_str()) == Some("used") {
-                bytes_deleted += self.locked_io.try_delete_file(&path).unwrap();
+                self.locked_io.try_delete_file(&path).unwrap();
             }
         }
+
+        // Read the actual size of the remaining files on disk here. This isn't actually necessary,
+        // it's just in case `self.sizes` is out of sync somehow
+        let real_size = self.real_files_size(depth, chunk_idx);
 
         self.sizes
             .write()
             .unwrap()
             .entry(depth)
-            .and_modify(|entry| entry[chunk_idx] = entry[chunk_idx].saturating_sub(bytes_deleted));
+            .and_modify(|entry| entry[chunk_idx] = real_size);
 
         self.write_sizes_to_disk();
     }
@@ -177,6 +179,18 @@ impl<'a> UpdateManager<'a> {
     pub fn files_size(&self, depth: usize, chunk_idx: usize) -> u64 {
         let read_lock = self.sizes.read().unwrap();
         read_lock.get(&depth).map_or(0, |sizes| sizes[chunk_idx])
+    }
+
+    fn real_files_size(&self, depth: usize, chunk_idx: usize) -> u64 {
+        let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
+        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
+            return 0;
+        };
+
+        read_dir
+            .flatten()
+            .map(|entry| entry.metadata().unwrap().len())
+            .sum()
     }
 
     pub fn mark_filled_and_replace(
