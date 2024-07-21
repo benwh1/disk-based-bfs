@@ -55,7 +55,7 @@ impl<'a> UpdateBlockList<'a> {
         self.filled_blocks
             .sort_unstable_by_key(|block| (block.depth(), block.chunk_idx()));
 
-        let bytes_written = Arc::new(Mutex::new(HashMap::new()));
+        let total_bytes_written = Arc::new(Mutex::new(HashMap::new()));
 
         let num_disks = self.locked_io.num_disks();
         std::thread::scope(|s| {
@@ -65,7 +65,7 @@ impl<'a> UpdateBlockList<'a> {
                     let settings = self.settings;
                     let locked_io = self.locked_io;
 
-                    let bytes_written = bytes_written.clone();
+                    let total_bytes_written = total_bytes_written.clone();
 
                     ThreadBuilder::new()
                         .name(format!("write-update-blocks-{t}"))
@@ -91,17 +91,15 @@ impl<'a> UpdateBlockList<'a> {
                                     .map(|block| bytemuck::cast_slice(block.updates()))
                                     .collect::<Vec<_>>();
 
-                                let bytes_to_write =
-                                    buffers.iter().map(|buf| buf.len() as u64).sum::<u64>();
+                                let bytes_written =
+                                    locked_io.write_file_multiple_buffers(&file_path, &buffers);
 
-                                let mut bytes_written_lock = bytes_written.lock().unwrap();
+                                let mut bytes_written_lock = total_bytes_written.lock().unwrap();
                                 let sizes_for_depth = bytes_written_lock
                                     .entry(depth)
                                     .or_insert_with(|| vec![0; settings.num_array_chunks()]);
-                                sizes_for_depth[chunk_idx] += bytes_to_write;
+                                sizes_for_depth[chunk_idx] += bytes_written;
                                 drop(bytes_written_lock);
-
-                                locked_io.write_file_multiple_buffers(&file_path, &buffers);
                             }
                         })
                         .unwrap()
@@ -119,7 +117,7 @@ impl<'a> UpdateBlockList<'a> {
 
         // We could try to move the `bytes_written` vector out of the `Arc` and `Mutex` but it's
         // easier to just clone it
-        let lock = bytes_written.lock().unwrap();
+        let lock = total_bytes_written.lock().unwrap();
         (*lock).clone()
     }
 

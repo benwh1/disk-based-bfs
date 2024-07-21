@@ -91,7 +91,7 @@ impl<'a> LockedDisk<'a> {
         Ok(std::fs::read(path)?)
     }
 
-    pub fn try_write_file<'b>(&self, path: &'b Path, data: &[u8]) -> Result<(), Error<'b>> {
+    pub fn try_write_file<'b>(&self, path: &'b Path, data: &[u8]) -> Result<u64, Error<'b>> {
         self.try_write_file_multiple_buffers(path, &[data])
     }
 
@@ -99,7 +99,7 @@ impl<'a> LockedDisk<'a> {
         &self,
         path: &'b Path,
         data: &[&[u8]],
-    ) -> Result<(), Error<'b>> {
+    ) -> Result<u64, Error<'b>> {
         if !self.is_on_disk(path) {
             return Err(Error::FileNotOnDisk(path));
         }
@@ -114,14 +114,19 @@ impl<'a> LockedDisk<'a> {
             file.write_all(data)?;
         }
 
+        // Check that the number of bytes written is exactly the size of the file
+        let file_size = file.metadata().unwrap().len();
+        let data_size: u64 = data.iter().map(|buf| buf.len() as u64).sum();
+        assert_eq!(file_size, data_size);
+
         drop(file);
 
         std::fs::rename(path_tmp, path)?;
 
-        Ok(())
+        Ok(file_size)
     }
 
-    fn try_delete_file<'b>(&self, path: &'b Path) -> Result<(), Error<'b>> {
+    fn try_delete_file<'b>(&self, path: &'b Path) -> Result<u64, Error<'b>> {
         if !self.is_on_disk(path) {
             return Err(Error::FileNotOnDisk(path));
         }
@@ -130,9 +135,11 @@ impl<'a> LockedDisk<'a> {
 
         tracing::trace!("deleting file {path:?}");
 
+        let file_len = path.metadata()?.len();
+
         std::fs::remove_file(path)?;
 
-        Ok(())
+        Ok(file_len)
     }
 }
 
@@ -190,7 +197,7 @@ impl<'a> LockedIO<'a> {
         Err(Error::FileNotOnAnyDisk(path))
     }
 
-    pub fn try_write_file<'b>(&self, path: &'b Path, data: &[u8]) -> Result<(), Error<'b>> {
+    pub fn try_write_file<'b>(&self, path: &'b Path, data: &[u8]) -> Result<u64, Error<'b>> {
         for disk in &self.disks {
             let result = disk.try_write_file(path, data);
             match result {
@@ -206,7 +213,7 @@ impl<'a> LockedIO<'a> {
         &self,
         path: &'b Path,
         data: &[&[u8]],
-    ) -> Result<(), Error<'b>> {
+    ) -> Result<u64, Error<'b>> {
         for disk in &self.disks {
             let result = disk.try_write_file_multiple_buffers(path, data);
             match result {
@@ -218,7 +225,7 @@ impl<'a> LockedIO<'a> {
         Err(Error::FileNotOnAnyDisk(path))
     }
 
-    pub fn try_delete_file<'b>(&self, path: &'b Path) -> Result<(), Error<'b>> {
+    pub fn try_delete_file<'b>(&self, path: &'b Path) -> Result<u64, Error<'b>> {
         for disk in &self.disks {
             let result = disk.try_delete_file(path);
             match result {
@@ -248,16 +255,16 @@ impl<'a> LockedIO<'a> {
             .unwrap()
     }
 
-    pub fn write_file(&self, path: &Path, data: &[u8]) {
+    pub fn write_file(&self, path: &Path, data: &[u8]) -> u64 {
         self.try_write_file(path, data)
             .map_err(|e| panic!("failed to write file: {e}"))
-            .unwrap();
+            .unwrap()
     }
 
-    pub fn write_file_multiple_buffers(&self, path: &Path, data: &[&[u8]]) {
+    pub fn write_file_multiple_buffers(&self, path: &Path, data: &[&[u8]]) -> u64 {
         self.try_write_file_multiple_buffers(path, data)
             .map_err(|e| panic!("failed to write file: {e}"))
-            .unwrap();
+            .unwrap()
     }
 }
 

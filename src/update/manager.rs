@@ -153,8 +153,7 @@ impl<'a> UpdateManager<'a> {
 
         for path in read_dir.flatten().map(|entry| entry.path()) {
             if !delete_used_only || path.extension().and_then(|ext| ext.to_str()) == Some("used") {
-                bytes_deleted += path.metadata().unwrap().len();
-                self.locked_io.try_delete_file(&path).unwrap();
+                bytes_deleted += self.locked_io.try_delete_file(&path).unwrap();
             }
         }
 
