@@ -48,7 +48,7 @@ impl<'a> UpdateBlockList<'a> {
 
     /// Returns the number of bytes written for each chunk
     pub fn write_all(&mut self) -> HashMap<usize, Vec<u64>> {
-        tracing::debug!("writing {} update blocks", self.filled_blocks.len());
+        tracing::info!("writing {} update blocks", self.filled_blocks.len());
 
         // Sort the updates so that all the blocks that belong in the same file are consecutive,
         // so that we can use `chunk_by_mut` to group them together
@@ -113,7 +113,7 @@ impl<'a> UpdateBlockList<'a> {
             self.available_blocks.push(block.clear());
         }
 
-        tracing::debug!("finished writing update blocks");
+        tracing::info!("finished writing update blocks");
 
         // We could try to move the `bytes_written` vector out of the `Arc` and `Mutex` but it's
         // easier to just clone it
