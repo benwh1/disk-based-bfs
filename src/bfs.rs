@@ -285,6 +285,11 @@ impl<
         }
 
         self.write_update_array(update_buffer, depth, chunk_idx);
+
+        if self.settings.sync_filesystem {
+            io::sync();
+        }
+
         self.update_file_manager
             .delete_used_update_files(depth, chunk_idx);
 
@@ -783,6 +788,10 @@ impl<
             self.mark_chunk_exhausted(depth + 1, chunk_idx);
         }
 
+        if self.settings.sync_filesystem {
+            io::sync();
+        }
+
         tracing::debug!("deleting depth {depth} chunk {chunk_idx}");
         self.delete_chunk_file(depth, chunk_idx);
 
@@ -803,10 +812,6 @@ impl<
     }
 
     fn end_of_depth_cleanup(&self, depth: usize) {
-        if self.settings.sync_filesystem {
-            io::sync();
-        }
-
         // We now have the array at depth `depth + 1`, and update files/arrays for depth
         // `depth + 2`, so we can delete the directories (which should be empty) for the
         // previous depth.
@@ -1048,6 +1053,11 @@ impl<
         }
 
         self.write_state(State::Cleanup { depth });
+
+        if self.settings.sync_filesystem {
+            io::sync();
+        }
+
         self.end_of_depth_cleanup(depth);
 
         new
