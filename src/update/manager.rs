@@ -1,15 +1,16 @@
 use std::{
     collections::HashMap,
     sync::{Mutex, RwLock},
+    thread::Builder as ThreadBuilder,
 };
+
+use itertools::Itertools;
+use rand::distributions::{Alphanumeric, DistString as _};
 
 use crate::{
     io::LockedIO,
     settings::BfsSettings,
-    update::{
-        block_list::UpdateBlockList,
-        blocks::{AvailableUpdateBlock, FilledUpdateBlock},
-    },
+    update::blocks::{AvailableUpdateBlock, FilledUpdateBlock},
 };
 
 pub struct UpdateManager<'a> {
@@ -17,18 +18,132 @@ pub struct UpdateManager<'a> {
     locked_io: &'a LockedIO<'a>,
     sizes: RwLock<HashMap<usize, Vec<u64>>>,
     size_file_lock: Mutex<()>,
-    update_blocks: Mutex<UpdateBlockList<'a>>,
+    available_blocks: Mutex<Vec<AvailableUpdateBlock>>,
+    filled_blocks: Mutex<Vec<FilledUpdateBlock>>,
 }
 
 impl<'a> UpdateManager<'a> {
     pub fn new(settings: &'a BfsSettings, locked_io: &'a LockedIO) -> Self {
+        let num_blocks = 2 * settings.threads * settings.num_array_chunks();
+
+        tracing::debug!("creating {num_blocks} update blocks");
+
+        let available_blocks = Mutex::new(
+            (0..num_blocks)
+                .map(|_| AvailableUpdateBlock::new(settings.update_capacity_per_vec()))
+                .collect::<Vec<_>>(),
+        );
+        let filled_blocks = Mutex::new(Vec::new());
+
         Self {
             settings,
             locked_io,
             sizes: RwLock::new(HashMap::new()),
             size_file_lock: Mutex::new(()),
-            update_blocks: Mutex::new(UpdateBlockList::new(settings, locked_io)),
+            available_blocks,
+            filled_blocks,
         }
+    }
+
+    pub fn write_all(&self) {
+        let mut filled_blocks_lock = self.filled_blocks.lock().unwrap();
+        let mut filled_blocks = std::mem::take(&mut *filled_blocks_lock);
+        drop(filled_blocks_lock);
+
+        tracing::info!("writing {} update blocks", filled_blocks.len());
+
+        let num_disks = self.locked_io.num_disks();
+
+        // Sort all the blocks into chunks that will be written to the same disk so that each chunk
+        // can be processed by a separate thread
+        let mut chunked_filled_blocks = (0..num_disks).map(|_| Vec::new()).collect::<Vec<_>>();
+        for block in filled_blocks.drain(..) {
+            chunked_filled_blocks[block.chunk_idx() % num_disks].push(block);
+        }
+
+        // Sort each chunk by depth and chunk_idx so that blocks that can be written to the same
+        // file are consecutive in the list
+        for chunk in chunked_filled_blocks.iter_mut() {
+            chunk.sort_unstable_by_key(|block| (block.depth(), block.chunk_idx()));
+        }
+
+        std::thread::scope(|s| {
+            (0..num_disks)
+                .map(|t| {
+                    let filled_blocks = std::mem::take(&mut chunked_filled_blocks[t]);
+                    let available_blocks = &self.available_blocks;
+                    let settings = self.settings;
+                    let locked_io = self.locked_io;
+
+                    ThreadBuilder::new()
+                        .name(format!("write-update-blocks-{t}"))
+                        .spawn_scoped(s, move || {
+                            for ((depth, chunk_idx), chunk) in &filled_blocks
+                                .into_iter()
+                                .chunk_by(|b| (b.depth(), b.chunk_idx()))
+                            {
+                                let chunk = chunk.collect::<Vec<_>>();
+
+                                let dir_path = settings.update_chunk_dir_path(depth, chunk_idx);
+                                std::fs::create_dir_all(&dir_path).unwrap();
+
+                                let mut rng = rand::thread_rng();
+                                let file_name = Alphanumeric.sample_string(&mut rng, 16);
+                                let file_path = dir_path.join(file_name);
+
+                                let buffers = chunk
+                                    .iter()
+                                    .map(|block| bytemuck::cast_slice(block.updates()))
+                                    .collect::<Vec<_>>();
+
+                                let bytes_written =
+                                    locked_io.write_file_multiple_buffers(&file_path, &buffers);
+
+                                let mut sizes_lock = self.sizes.write().unwrap();
+                                let sizes_for_depth = sizes_lock
+                                    .entry(depth)
+                                    .or_insert_with(|| vec![0; settings.num_array_chunks()]);
+                                sizes_for_depth[chunk_idx] += bytes_written;
+                                drop(sizes_lock);
+
+                                // Finished processing the blocks, so clear them and put them back
+                                // in `self.available_blocks`
+                                let mut available_blocks_lock = available_blocks.lock().unwrap();
+                                for block in chunk {
+                                    available_blocks_lock.push(block.clear());
+                                }
+                                drop(available_blocks_lock);
+                            }
+                        })
+                        .unwrap()
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .for_each(|t| t.join().unwrap());
+        });
+
+        self.write_sizes_to_disk();
+
+        tracing::info!("finished writing update blocks");
+    }
+
+    fn take_impl(&self, log: bool) -> AvailableUpdateBlock {
+        if log {
+            let blocks_remaining = self.available_blocks.lock().unwrap().len();
+            tracing::trace!("taking update block, {blocks_remaining} blocks remaining");
+        }
+
+        loop {
+            if let Some(block) = self.available_blocks.lock().unwrap().pop() {
+                return block;
+            }
+
+            self.write_all();
+        }
+    }
+
+    fn take(&self) -> AvailableUpdateBlock {
+        self.take_impl(true)
     }
 
     /// Note: the sizes are not guaranteed to be *exactly* correct, because it's possible that we
@@ -62,79 +177,21 @@ impl<'a> UpdateManager<'a> {
     }
 
     pub fn take_n(&self, n: usize) -> Vec<AvailableUpdateBlock> {
-        let mut update_blocks_lock = self.update_blocks.lock().unwrap();
-
-        tracing::trace!(
-            "taking {n} update blocks, {} blocks remaining",
-            update_blocks_lock.num_available_blocks(),
-        );
-
-        let mut total_bytes_written = HashMap::new();
+        let blocks_remaining = self.available_blocks.lock().unwrap().len();
+        tracing::trace!("taking {n} update blocks, {blocks_remaining} blocks remaining");
 
         let mut blocks = Vec::with_capacity(n);
+
         for _ in 0..n {
-            let (block, bytes_written) = update_blocks_lock.take_impl(false);
+            let block = self.take_impl(false);
             blocks.push(block);
-
-            // Sum up the total number of bytes written across all calls to `take_impl`
-            if let Some(bytes_written) = bytes_written {
-                for (depth, vec) in bytes_written {
-                    total_bytes_written
-                        .entry(depth)
-                        .or_insert_with(|| vec![0; self.settings.num_array_chunks()])
-                        .iter_mut()
-                        .zip(vec.iter())
-                        .for_each(|(total, new)| *total += new);
-                }
-            }
-        }
-
-        drop(update_blocks_lock);
-
-        if !total_bytes_written.is_empty() {
-            // Update `self.sizes` with the new bytes written
-            let mut sizes_lock = self.sizes.write().unwrap();
-            for (depth, vec) in total_bytes_written {
-                sizes_lock
-                    .entry(depth)
-                    .or_insert_with(|| vec![0; self.settings.num_array_chunks()])
-                    .iter_mut()
-                    .zip(vec.iter())
-                    .for_each(|(total, new)| *total += new);
-            }
-
-            drop(sizes_lock);
-
-            self.write_sizes_to_disk();
         }
 
         blocks
     }
 
     pub fn put(&self, block: FilledUpdateBlock) {
-        self.update_blocks.lock().unwrap().put(block);
-    }
-
-    pub fn flush(&self) {
-        tracing::info!("flushing update files");
-
-        let bytes_written = self.update_blocks.lock().unwrap().write_all();
-
-        let mut sizes_lock = self.sizes.write().unwrap();
-        for (depth, vec) in bytes_written {
-            sizes_lock
-                .entry(depth)
-                .or_insert_with(|| vec![0; self.settings.num_array_chunks()])
-                .iter_mut()
-                .zip(vec.iter())
-                .for_each(|(total, new)| *total += new);
-        }
-
-        drop(sizes_lock);
-
-        self.write_sizes_to_disk();
-
-        tracing::info!("finished flushing update files");
+        self.filled_blocks.lock().unwrap().push(block);
     }
 
     fn delete_update_files_impl(&self, depth: usize, chunk_idx: usize, delete_used_only: bool) {
@@ -205,25 +262,8 @@ impl<'a> UpdateManager<'a> {
             upd.capacity(),
         );
 
-        let (new, bytes_written) = self.update_blocks.lock().unwrap().take();
+        let new = self.take();
         let old = std::mem::replace(upd, new).into_filled(depth, chunk_idx);
         self.put(old);
-
-        // Update `self.sizes` with the new bytes written
-        if let Some(bytes_written) = bytes_written {
-            let mut sizes_lock = self.sizes.write().unwrap();
-            for (depth, vec) in bytes_written {
-                sizes_lock
-                    .entry(depth)
-                    .or_insert_with(|| vec![0; self.settings.num_array_chunks()])
-                    .iter_mut()
-                    .zip(vec.iter())
-                    .for_each(|(total, new)| *total += new);
-            }
-
-            drop(sizes_lock);
-
-            self.write_sizes_to_disk();
-        }
     }
 }

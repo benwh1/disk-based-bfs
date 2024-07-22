@@ -1043,7 +1043,7 @@ impl<
             threads.into_iter().for_each(|t| t.join().unwrap());
         });
 
-        self.update_file_manager.flush();
+        self.update_file_manager.write_all();
 
         let new = *new_states.lock().unwrap();
         tracing::info!("depth {} new {new}", depth + 1);
