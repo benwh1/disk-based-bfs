@@ -591,6 +591,8 @@ impl<
 
         tracing::info!("starting in-memory BFS");
 
+        tracing::info!("depth 0 new 1");
+
         loop {
             new = 0;
 
