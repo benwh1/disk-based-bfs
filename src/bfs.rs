@@ -436,11 +436,16 @@ impl<
 
         callback.end_of_chunk(depth + 1, chunk_idx);
 
-        // Write remaining update files
+        // Send the remaining updates back to the update manager
         for (idx, upd) in updates.into_iter().enumerate() {
             self.update_file_manager
                 .put(upd.into_filled(depth + 2, idx));
         }
+
+        // Force the updates to be written to disk - this is necessary otherwise it's possible that
+        // this chunk will be deleted and the program terminated before the final updates are
+        // written to disk
+        self.update_file_manager.write_all();
 
         new_positions
     }
