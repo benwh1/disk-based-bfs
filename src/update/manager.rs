@@ -50,6 +50,10 @@ impl<'a> UpdateManager<'a> {
         let mut filled_blocks = std::mem::take(&mut *filled_blocks_lock);
         drop(filled_blocks_lock);
 
+        if filled_blocks.is_empty() {
+            return;
+        }
+
         tracing::info!("writing {} update blocks", filled_blocks.len());
 
         let num_disks = self.locked_io.num_disks();
@@ -84,27 +88,32 @@ impl<'a> UpdateManager<'a> {
                             {
                                 let chunk = chunk.collect::<Vec<_>>();
 
-                                let dir_path = settings.update_chunk_dir_path(depth, chunk_idx);
-                                std::fs::create_dir_all(&dir_path).unwrap();
-
-                                let mut rng = rand::thread_rng();
-                                let file_name = Alphanumeric.sample_string(&mut rng, 16);
-                                let file_path = dir_path.join(file_name);
-
                                 let buffers = chunk
                                     .iter()
                                     .map(|block| bytemuck::cast_slice(block.updates()))
                                     .collect::<Vec<_>>();
 
-                                let bytes_written =
-                                    locked_io.write_file_multiple_buffers(&file_path, &buffers);
+                                // Only write the chunk if it's not empty. We still need to return
+                                // the blocks to `self.available_blocks` even if we don't write
+                                // them, though
+                                if chunk.iter().any(|block| !block.is_empty()) {
+                                    let dir_path = settings.update_chunk_dir_path(depth, chunk_idx);
+                                    std::fs::create_dir_all(&dir_path).unwrap();
 
-                                let mut sizes_lock = self.sizes.write().unwrap();
-                                let sizes_for_depth = sizes_lock
-                                    .entry(depth)
-                                    .or_insert_with(|| vec![0; settings.num_array_chunks()]);
-                                sizes_for_depth[chunk_idx] += bytes_written;
-                                drop(sizes_lock);
+                                    let mut rng = rand::thread_rng();
+                                    let file_name = Alphanumeric.sample_string(&mut rng, 16);
+                                    let file_path = dir_path.join(file_name);
+
+                                    let bytes_written =
+                                        locked_io.write_file_multiple_buffers(&file_path, &buffers);
+
+                                    let mut sizes_lock = self.sizes.write().unwrap();
+                                    let sizes_for_depth = sizes_lock
+                                        .entry(depth)
+                                        .or_insert_with(|| vec![0; settings.num_array_chunks()]);
+                                    sizes_for_depth[chunk_idx] += bytes_written;
+                                    drop(sizes_lock);
+                                }
 
                                 // Finished processing the blocks, so clear them and put them back
                                 // in `self.available_blocks`

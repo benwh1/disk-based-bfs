@@ -25,6 +25,10 @@ impl AvailableUpdateBlock {
         self.updates.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.updates.is_empty()
+    }
+
     pub fn capacity(&self) -> usize {
         self.updates.capacity()
     }
@@ -42,6 +46,14 @@ impl FilledUpdateBlock {
         AvailableUpdateBlock {
             updates: self.updates,
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.updates.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.updates.is_empty()
     }
 
     pub fn updates(&self) -> &[u32] {
