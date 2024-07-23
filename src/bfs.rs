@@ -482,7 +482,11 @@ impl<
             return 0;
         };
 
-        for file_path in read_dir.flatten().map(|entry| entry.path()) {
+        for file_path in read_dir
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) != Some("tmp"))
+        {
             let bytes = self.locked_io.read_to_vec(&file_path);
             assert_eq!(bytes.len() % 4, 0);
 
