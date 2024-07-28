@@ -216,9 +216,9 @@ impl BfsSettings {
             .join(format!("depth-{depth}"))
     }
 
-    pub fn update_array_file_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+    pub fn update_array_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.update_array_dir_path(depth, chunk_idx)
-            .join(format!("update-chunk-{chunk_idx}.dat"))
+            .join(format!("update-chunk-{chunk_idx}"))
     }
 
     pub fn new_positions_data_dir_path(&self, depth: usize) -> PathBuf {

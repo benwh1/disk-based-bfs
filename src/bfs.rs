@@ -130,38 +130,6 @@ impl<
         true
     }
 
-    fn try_read_update_array(
-        &self,
-        update_buffer: &mut [u8],
-        depth: usize,
-        chunk_idx: usize,
-    ) -> bool {
-        let file_path = self.settings.update_array_file_path(depth, chunk_idx);
-
-        if self
-            .locked_io
-            .try_read_file(&file_path, update_buffer)
-            .is_err()
-        {
-            return false;
-        }
-
-        // Check that the file size is correct
-        let expected_size = self.settings.chunk_size_bytes;
-        let actual_size = file_path.metadata().unwrap().len() as usize;
-        assert_eq!(expected_size, actual_size);
-
-        true
-    }
-
-    fn write_update_array(&self, update_buffer: &[u8], depth: usize, chunk_idx: usize) {
-        let dir_path = self.settings.update_array_dir_path(depth, chunk_idx);
-        std::fs::create_dir_all(&dir_path).unwrap();
-
-        let file_path = self.settings.update_array_file_path(depth, chunk_idx);
-        self.locked_io.write_file(&file_path, update_buffer);
-    }
-
     fn create_chunk(&self, chunk_buffer: &mut [u8], hashsets: &[&HashSet<u64>], chunk_idx: usize) {
         chunk_buffer.fill(0);
 
@@ -186,13 +154,6 @@ impl<
 
     fn delete_chunk_file(&self, depth: usize, chunk_idx: usize) {
         let file_path = self.settings.chunk_file_path(depth, chunk_idx);
-        if file_path.exists() {
-            self.locked_io.try_delete_file(&file_path).unwrap();
-        }
-    }
-
-    fn delete_update_array(&self, depth: usize, chunk_idx: usize) {
-        let file_path = self.settings.update_array_file_path(depth, chunk_idx);
         if file_path.exists() {
             self.locked_io.try_delete_file(&file_path).unwrap();
         }
@@ -226,22 +187,57 @@ impl<
         Some(usize::from_le_bytes(buf))
     }
 
-    fn compress_update_files(&self, update_buffer: &mut [u8], depth: usize, chunk_idx: usize) {
-        let used_space = self.update_file_manager.files_size(depth, chunk_idx);
-        let gb = used_space as f64 / (1 << 30) as f64;
+    fn update_update_buffer_from_update_arrays(
+        &self,
+        update_buffer: &mut [u8],
+        depth: usize,
+        chunk_idx: usize,
+    ) {
+        let dir_path = self.settings.update_array_chunk_dir_path(depth, chunk_idx);
+        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
+            return;
+        };
 
-        tracing::info!(
-            "compressing {gb:.3} GiB of update files for depth {} -> {} chunk {chunk_idx}",
-            depth - 1,
-            depth,
-        );
-
-        // If there is already an update array file, read it into the buffer first so we don't
-        // overwrite the old array. Otherwise, just fill with zeros.
-        if !self.try_read_update_array(update_buffer, depth, chunk_idx) {
-            update_buffer.fill(0);
+        // Mark "used" files as unused, in case we restart the program while this loop is running
+        // and need to re-read all the update arrays
+        for file_path in read_dir
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("used"))
+        {
+            let file_path_unused = file_path.with_extension("");
+            std::fs::rename(file_path, file_path_unused).unwrap();
         }
 
+        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
+            return;
+        };
+
+        // Update from update arrays
+        for file_path in read_dir
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_none())
+        {
+            let bytes = self.locked_io.read_to_vec(&file_path);
+            assert_eq!(bytes.len(), update_buffer.len());
+
+            for (buf_byte, &new) in update_buffer.iter_mut().zip(bytes.iter()) {
+                *buf_byte |= new;
+            }
+
+            // Rename the file to mark it as used
+            let file_path_used = file_path.with_extension("used");
+            std::fs::rename(file_path, file_path_used).unwrap();
+        }
+    }
+
+    fn update_update_buffer_from_update_files(
+        &self,
+        update_buffer: &mut [u8],
+        depth: usize,
+        chunk_idx: usize,
+    ) {
         let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
         let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
             return;
@@ -262,6 +258,7 @@ impl<
             return;
         };
 
+        // Update from update files
         for file_path in read_dir
             .flatten()
             .map(|entry| entry.path())
@@ -283,13 +280,32 @@ impl<
             let file_path_used = file_path.with_extension("used");
             std::fs::rename(file_path, file_path_used).unwrap();
         }
+    }
 
-        self.write_update_array(update_buffer, depth, chunk_idx);
+    fn compress_update_files(&self, update_buffer: &mut [u8], depth: usize, chunk_idx: usize) {
+        let used_space = self.update_file_manager.files_size(depth, chunk_idx);
+        let gb = used_space as f64 / (1 << 30) as f64;
+
+        tracing::info!(
+            "compressing {gb:.3} GiB of update files for depth {} -> {} chunk {chunk_idx}",
+            depth - 1,
+            depth,
+        );
+
+        update_buffer.fill(0);
+
+        self.update_update_buffer_from_update_arrays(update_buffer, depth, chunk_idx);
+        self.update_update_buffer_from_update_files(update_buffer, depth, chunk_idx);
+
+        self.update_file_manager
+            .write_update_array(update_buffer, depth, chunk_idx);
 
         if self.settings.sync_filesystem {
             io::sync();
         }
 
+        self.update_file_manager
+            .delete_used_update_arrays(depth, chunk_idx);
         self.update_file_manager
             .delete_used_update_files(depth, chunk_idx);
 
@@ -426,7 +442,7 @@ impl<
             chunk_idx,
         );
 
-        new_positions += self.update_and_expand_from_update_array(
+        new_positions += self.update_and_expand_from_update_arrays(
             chunk_buffer,
             &mut updates,
             &mut callback,
@@ -523,7 +539,7 @@ impl<
         new_positions
     }
 
-    fn update_and_expand_from_update_array(
+    fn update_and_expand_from_update_arrays(
         &self,
         chunk_buffer: &mut [u8],
         updates: &mut [AvailableUpdateBlock],
@@ -536,37 +552,45 @@ impl<
         let mut expander = self.expander.clone();
         let mut expanded = [0u64; EXPANSION_NODES];
 
-        let file_path = self.settings.update_array_file_path(depth + 1, chunk_idx);
-        if !file_path.exists() {
+        let dir_path = self
+            .settings
+            .update_array_chunk_dir_path(depth + 1, chunk_idx);
+        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
             return 0;
-        }
+        };
 
-        let file_len = file_path.metadata().unwrap().len() as usize;
-        assert_eq!(file_len, self.settings.chunk_size_bytes);
+        for file_path in read_dir
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) != Some("tmp"))
+        {
+            let file_len = file_path.metadata().unwrap().len() as usize;
+            assert_eq!(file_len, self.settings.chunk_size_bytes);
 
-        let update_array_bytes = self.locked_io.read_to_vec(&file_path);
+            let update_array_bytes = self.locked_io.read_to_vec(&file_path);
 
-        for (byte_idx, &update_byte) in update_array_bytes.iter().enumerate() {
-            for bit_idx in 0..8 {
-                let chunk_byte = chunk_buffer[byte_idx];
-                if (update_byte >> bit_idx) & 1 == 1 && (chunk_byte >> bit_idx) & 1 == 0 {
-                    chunk_buffer[byte_idx] |= 1 << bit_idx;
-                    new_positions += 1;
+            for (byte_idx, &update_byte) in update_array_bytes.iter().enumerate() {
+                for bit_idx in 0..8 {
+                    let chunk_byte = chunk_buffer[byte_idx];
+                    if (update_byte >> bit_idx) & 1 == 1 && (chunk_byte >> bit_idx) & 1 == 0 {
+                        chunk_buffer[byte_idx] |= 1 << bit_idx;
+                        new_positions += 1;
 
-                    let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
-                    callback.new_state(depth + 1, encoded);
+                        let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
+                        callback.new_state(depth + 1, encoded);
 
-                    if new_positions as usize % self.settings.capacity_check_frequency == 0 {
-                        self.check_update_vec_capacity(updates, depth + 2);
-                    }
+                        if new_positions as usize % self.settings.capacity_check_frequency == 0 {
+                            self.check_update_vec_capacity(updates, depth + 2);
+                        }
 
-                    // Expand the node
-                    let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
-                    expander(encoded, &mut expanded);
+                        // Expand the node
+                        let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
+                        expander(encoded, &mut expanded);
 
-                    for node in expanded {
-                        let (idx, offset) = self.node_to_chunk_coords(node);
-                        updates[idx].push(offset);
+                        for node in expanded {
+                            let (idx, offset) = self.node_to_chunk_coords(node);
+                            updates[idx].push(offset);
+                        }
                     }
                 }
             }
@@ -814,10 +838,11 @@ impl<
             .delete_update_files(depth + 1, chunk_idx);
 
         tracing::debug!(
-            "deleting update array for depth {depth} -> {} chunk {chunk_idx}",
+            "deleting update arrays for depth {depth} -> {} chunk {chunk_idx}",
             depth + 1,
         );
-        self.delete_update_array(depth + 1, chunk_idx);
+        self.update_file_manager
+            .delete_update_arrays(depth + 1, chunk_idx);
 
         new
     }
