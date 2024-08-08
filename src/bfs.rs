@@ -1150,6 +1150,8 @@ impl<
                     self.write_state(State::Done);
                 }
                 State::CompressAllUpdateFiles { mut depth } => {
+                    self.chunk_buffers.fill(self.settings.chunk_size_bytes);
+
                     if self.settings.compress_update_files_at_end_of_iter {
                         self.compress_all_update_files(depth + 2);
                     }
