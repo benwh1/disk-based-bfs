@@ -1148,6 +1148,10 @@ impl<
                     self.write_state(State::Done);
                 }
                 State::Cleanup { mut depth } => {
+                    if self.settings.sync_filesystem {
+                        io::sync();
+                    }
+
                     self.end_of_depth_cleanup(depth);
                     depth += 1;
 
