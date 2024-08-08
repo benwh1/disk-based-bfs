@@ -31,6 +31,7 @@ pub enum InMemoryBfsResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum State {
     Iteration { depth: usize },
+    CompressAllUpdateFiles { depth: usize },
     Cleanup { depth: usize },
     Done,
 }
@@ -1085,6 +1086,7 @@ impl<
         tracing::info!("depth {} new {new}", depth + 1);
 
         if self.settings.compress_update_files_at_end_of_iter {
+            self.write_state(State::CompressAllUpdateFiles { depth });
             self.compress_all_update_files(depth + 2);
         }
 
@@ -1138,6 +1140,29 @@ impl<
         match self.read_state() {
             Some(s) => match s {
                 State::Iteration { mut depth } => {
+                    // Initialize update file manager with the current update file sizes
+                    self.update_file_manager.try_read_sizes_from_disk();
+
+                    while self.do_iteration(None, depth) != 0 {
+                        depth += 1;
+                    }
+
+                    self.write_state(State::Done);
+                }
+                State::CompressAllUpdateFiles { mut depth } => {
+                    if self.settings.compress_update_files_at_end_of_iter {
+                        self.compress_all_update_files(depth + 2);
+                    }
+
+                    self.write_state(State::Cleanup { depth });
+
+                    if self.settings.sync_filesystem {
+                        io::sync();
+                    }
+
+                    self.end_of_depth_cleanup(depth);
+                    depth += 1;
+
                     // Initialize update file manager with the current update file sizes
                     self.update_file_manager.try_read_sizes_from_disk();
 
