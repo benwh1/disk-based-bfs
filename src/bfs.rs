@@ -1150,6 +1150,9 @@ impl<
                     self.write_state(State::Done);
                 }
                 State::CompressAllUpdateFiles { mut depth } => {
+                    // Initialize update file manager with the current update file sizes
+                    self.update_file_manager.try_read_sizes_from_disk();
+
                     self.chunk_buffers.fill(self.settings.chunk_size_bytes);
 
                     if self.settings.compress_update_files_at_end_of_iter {
@@ -1165,9 +1168,6 @@ impl<
                     self.end_of_depth_cleanup(depth);
                     depth += 1;
 
-                    // Initialize update file manager with the current update file sizes
-                    self.update_file_manager.try_read_sizes_from_disk();
-
                     while self.do_iteration(None, depth) != 0 {
                         depth += 1;
                     }
@@ -1175,15 +1175,15 @@ impl<
                     self.write_state(State::Done);
                 }
                 State::Cleanup { mut depth } => {
+                    // Initialize update file manager with the current update file sizes
+                    self.update_file_manager.try_read_sizes_from_disk();
+
                     if self.settings.sync_filesystem {
                         io::sync();
                     }
 
                     self.end_of_depth_cleanup(depth);
                     depth += 1;
-
-                    // Initialize update file manager with the current update file sizes
-                    self.update_file_manager.try_read_sizes_from_disk();
 
                     while self.do_iteration(None, depth) != 0 {
                         depth += 1;
