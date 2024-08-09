@@ -338,7 +338,13 @@ impl<'a> UpdateManager<'a> {
             .map(|read_dir| {
                 read_dir
                     .flatten()
-                    .map(|entry| entry.metadata().unwrap().len())
+                    // It's possible that one of these files may be a `.tmp` file which was
+                    // renamed between the call to `read_dir` and now. In that case, unwrapping
+                    // `entry.metadata()` would panic since the file no longer exists, so we use
+                    // 0 as the length instead. This does mean we skip over the renamed file,
+                    // but it's not important because these numbers are only used as an
+                    // approximation to know when to compress update files.
+                    .map(|entry| entry.metadata().map_or(0, |m| m.len()))
                     .sum::<u64>()
             })
             .unwrap_or_default();
@@ -348,7 +354,7 @@ impl<'a> UpdateManager<'a> {
             .map(|read_dir| {
                 read_dir
                     .flatten()
-                    .map(|entry| entry.metadata().unwrap().len())
+                    .map(|entry| entry.metadata().map_or(0, |m| m.len()))
                     .sum::<u64>()
             })
             .unwrap_or_default();
