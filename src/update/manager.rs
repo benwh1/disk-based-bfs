@@ -8,22 +8,23 @@ use itertools::Itertools;
 use rand::distributions::{Alphanumeric, DistString as _};
 
 use crate::{
+    chunk_allocator::ChunkAllocator,
     io::LockedIO,
     settings::BfsSettings,
     update::blocks::{AvailableUpdateBlock, FilledUpdateBlock},
 };
 
-pub struct UpdateManager<'a> {
-    settings: &'a BfsSettings,
-    locked_io: &'a LockedIO<'a>,
+pub struct UpdateManager<'a, C: ChunkAllocator + Sync> {
+    settings: &'a BfsSettings<C>,
+    locked_io: &'a LockedIO<'a, C>,
     sizes: RwLock<HashMap<usize, Vec<u64>>>,
     size_file_lock: Mutex<()>,
     available_blocks: Mutex<Vec<AvailableUpdateBlock>>,
     filled_blocks: Mutex<Vec<FilledUpdateBlock>>,
 }
 
-impl<'a> UpdateManager<'a> {
-    pub fn new(settings: &'a BfsSettings, locked_io: &'a LockedIO) -> Self {
+impl<'a, C: ChunkAllocator + Sync> UpdateManager<'a, C> {
+    pub fn new(settings: &'a BfsSettings<C>, locked_io: &'a LockedIO<C>) -> Self {
         let num_blocks = 2 * settings.threads * settings.num_array_chunks();
 
         tracing::debug!("creating {num_blocks} update blocks");
@@ -62,7 +63,11 @@ impl<'a> UpdateManager<'a> {
         // can be processed by a separate thread
         let mut chunked_filled_blocks = (0..num_disks).map(|_| Vec::new()).collect::<Vec<_>>();
         for block in filled_blocks.drain(..) {
-            chunked_filled_blocks[block.chunk_idx() % num_disks].push(block);
+            let chunk_root_idx = self
+                .settings
+                .chunk_allocator
+                .chunk_root_idx(block.chunk_idx());
+            chunked_filled_blocks[chunk_root_idx].push(block);
         }
 
         // Sort each chunk by depth and chunk_idx so that blocks that can be written to the same

@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-pub struct BfsSettingsBuilder {
+use crate::chunk_allocator::{ChunkAllocator, Uniform};
+
+pub struct BfsSettingsBuilder<ChunkAlloc: ChunkAllocator> {
     threads: usize,
     chunk_size_bytes: Option<usize>,
     update_memory: Option<usize>,
@@ -8,6 +10,7 @@ pub struct BfsSettingsBuilder {
     initial_states: Option<Vec<u64>>,
     state_size: Option<u64>,
     root_directories: Option<Vec<PathBuf>>,
+    chunk_allocator: Option<ChunkAlloc>,
     initial_memory_limit: Option<usize>,
     update_files_compression_threshold: Option<u64>,
     buf_io_capacity: Option<usize>,
@@ -16,13 +19,13 @@ pub struct BfsSettingsBuilder {
     compress_update_files_at_end_of_iter: Option<bool>,
 }
 
-impl Default for BfsSettingsBuilder {
+impl<ChunkAlloc: ChunkAllocator> Default for BfsSettingsBuilder<ChunkAlloc> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl BfsSettingsBuilder {
+impl<ChunkAlloc: ChunkAllocator> BfsSettingsBuilder<ChunkAlloc> {
     pub fn new() -> Self {
         Self {
             threads: 1,
@@ -32,6 +35,7 @@ impl BfsSettingsBuilder {
             initial_states: None,
             state_size: None,
             root_directories: None,
+            chunk_allocator: None,
             initial_memory_limit: None,
             update_files_compression_threshold: None,
             buf_io_capacity: None,
@@ -79,6 +83,14 @@ impl BfsSettingsBuilder {
         self
     }
 
+    pub fn chunk_allocator(
+        mut self,
+        chunk_allocator: ChunkAlloc,
+    ) -> BfsSettingsBuilder<ChunkAlloc> {
+        self.chunk_allocator = Some(chunk_allocator);
+        self
+    }
+
     pub fn initial_memory_limit(mut self, initial_memory_limit: usize) -> Self {
         self.initial_memory_limit = Some(initial_memory_limit);
         self
@@ -112,7 +124,7 @@ impl BfsSettingsBuilder {
         self
     }
 
-    pub fn build(self) -> Option<BfsSettings> {
+    pub fn build(self) -> Option<BfsSettings<ChunkAlloc>> {
         // Require that all chunks are the same size
         let chunk_size_bytes = self.chunk_size_bytes?;
         let state_size = self.state_size? as usize;
@@ -128,6 +140,7 @@ impl BfsSettingsBuilder {
             initial_states: self.initial_states?,
             state_size: self.state_size?,
             root_directories: self.root_directories?,
+            chunk_allocator: self.chunk_allocator?,
             initial_memory_limit: self.initial_memory_limit?,
             update_files_compression_threshold: self.update_files_compression_threshold?,
             buf_io_capacity: self.buf_io_capacity?,
@@ -138,7 +151,14 @@ impl BfsSettingsBuilder {
     }
 }
 
-pub struct BfsSettings {
+impl BfsSettingsBuilder<Uniform> {
+    pub fn uniform_chunk_allocator(self) -> Self {
+        let n = self.root_directories.as_ref().unwrap().len();
+        self.chunk_allocator(Uniform(n))
+    }
+}
+
+pub struct BfsSettings<ChunkAlloc: ChunkAllocator> {
     pub(crate) threads: usize,
     pub(crate) chunk_size_bytes: usize,
     pub(crate) update_memory: usize,
@@ -146,6 +166,7 @@ pub struct BfsSettings {
     pub(crate) initial_states: Vec<u64>,
     pub(crate) state_size: u64,
     pub(crate) root_directories: Vec<PathBuf>,
+    pub(crate) chunk_allocator: ChunkAlloc,
     pub(crate) initial_memory_limit: usize,
     pub(crate) update_files_compression_threshold: u64,
     pub(crate) buf_io_capacity: usize,
@@ -154,7 +175,7 @@ pub struct BfsSettings {
     pub(crate) compress_update_files_at_end_of_iter: bool,
 }
 
-impl BfsSettings {
+impl<ChunkAlloc: ChunkAllocator> BfsSettings<ChunkAlloc> {
     pub fn array_bytes(&self) -> usize {
         self.state_size.div_ceil(8) as usize
     }
@@ -177,7 +198,8 @@ impl BfsSettings {
     }
 
     pub fn root_dir(&self, chunk_idx: usize) -> &Path {
-        &self.root_directories[chunk_idx % self.root_directories.len()]
+        let chunk_root_idx = self.chunk_allocator.chunk_root_idx(chunk_idx);
+        &self.root_directories[chunk_root_idx]
     }
 
     pub fn state_file_path(&self) -> PathBuf {

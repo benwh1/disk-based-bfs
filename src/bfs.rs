@@ -12,6 +12,7 @@ use serde_derive::{Deserialize, Serialize};
 
 use crate::{
     callback::BfsCallback,
+    chunk_allocator::ChunkAllocator,
     chunk_buffer_list::ChunkBufferList,
     io::{self, LockedIO},
     settings::BfsSettings,
@@ -40,26 +41,28 @@ pub struct Bfs<
     'a,
     Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
     Callback: BfsCallback + Clone + Sync,
+    ChunkAlloc: ChunkAllocator + Sync,
     const EXPANSION_NODES: usize,
 > {
-    settings: &'a BfsSettings,
-    locked_io: &'a LockedIO<'a>,
+    settings: &'a BfsSettings<ChunkAlloc>,
+    locked_io: &'a LockedIO<'a, ChunkAlloc>,
     expander: Expander,
     callback: Callback,
     chunk_buffers: ChunkBufferList,
-    update_file_manager: UpdateManager<'a>,
+    update_file_manager: UpdateManager<'a, ChunkAlloc>,
 }
 
 impl<
         'a,
         Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
         Callback: BfsCallback + Clone + Sync,
+        ChunkAlloc: ChunkAllocator + Sync,
         const EXPANSION_NODES: usize,
-    > Bfs<'a, Expander, Callback, EXPANSION_NODES>
+    > Bfs<'a, Expander, Callback, ChunkAlloc, EXPANSION_NODES>
 {
     pub fn new(
-        settings: &'a BfsSettings,
-        locked_io: &'a LockedIO,
+        settings: &'a BfsSettings<ChunkAlloc>,
+        locked_io: &'a LockedIO<ChunkAlloc>,
         expander: Expander,
         callback: Callback,
     ) -> Self {
