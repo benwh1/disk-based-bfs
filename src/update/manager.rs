@@ -248,11 +248,18 @@ impl<'a, C: ChunkAllocator + Sync> UpdateManager<'a, C> {
             return;
         };
 
+        // Find all paths to delete and then batch-delete them
+        let mut path_bufs_to_delete = Vec::new();
         for path in read_dir.flatten().map(|entry| entry.path()) {
             if !delete_used_only || path.extension().and_then(|ext| ext.to_str()) == Some("used") {
-                self.locked_io.try_delete_file(&path).unwrap();
+                path_bufs_to_delete.push(path);
             }
         }
+        let paths_to_delete = path_bufs_to_delete
+            .iter()
+            .map(|p| p.as_path())
+            .collect::<Vec<_>>();
+        self.locked_io.try_delete_files(&paths_to_delete).unwrap();
 
         // Read the actual size of the remaining files on disk here. This isn't actually necessary,
         // it's just in case `self.sizes` is out of sync somehow
@@ -287,11 +294,18 @@ impl<'a, C: ChunkAllocator + Sync> UpdateManager<'a, C> {
             return;
         };
 
+        // Find all paths to delete and then batch-delete them
+        let mut path_bufs_to_delete = Vec::new();
         for path in read_dir.flatten().map(|entry| entry.path()) {
             if !delete_used_only || path.extension().and_then(|ext| ext.to_str()) == Some("used") {
-                self.locked_io.try_delete_file(&path).unwrap();
+                path_bufs_to_delete.push(path);
             }
         }
+        let paths_to_delete = path_bufs_to_delete
+            .iter()
+            .map(|p| p.as_path())
+            .collect::<Vec<_>>();
+        self.locked_io.try_delete_files(&paths_to_delete).unwrap();
 
         // Read the actual size of the remaining files on disk here. This isn't actually necessary,
         // it's just in case `self.sizes` is out of sync somehow

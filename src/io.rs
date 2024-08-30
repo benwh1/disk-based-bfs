@@ -17,6 +17,12 @@ pub enum Error<'a> {
     #[error("FileNotOnAnyDisk: path {0:?} not on any disk")]
     FileNotOnAnyDisk(&'a Path),
 
+    #[error("FilesNotAllOnDisk: files {0:?} not on disk")]
+    FilesNotAllOnDisk(&'a [&'a Path]),
+
+    #[error("FilesNotOnSameDisk: files {0:?} not on same disk")]
+    FilesNotOnSameDisk(&'a [&'a Path]),
+
     #[error("IoError: {0}")]
     IoError(#[from] std::io::Error),
 }
@@ -141,6 +147,23 @@ impl<'a, C: ChunkAllocator> LockedDisk<'a, C> {
 
         Ok(file_len)
     }
+
+    fn try_delete_files<'b>(&'b self, paths: &'b [&Path]) -> Result<u64, Error> {
+        if paths.iter().any(|p| !self.is_on_disk(p)) {
+            return Err(Error::FilesNotAllOnDisk(paths));
+        }
+
+        let _lock = self.lock();
+
+        let mut bytes_deleted = 0;
+        for path in paths {
+            tracing::trace!("deleting file {path:?}");
+            bytes_deleted += path.metadata()?.len();
+            std::fs::remove_file(path)?;
+        }
+
+        Ok(bytes_deleted)
+    }
 }
 
 pub struct LockedIO<'a, C: ChunkAllocator> {
@@ -235,6 +258,18 @@ impl<'a, C: ChunkAllocator> LockedIO<'a, C> {
         }
 
         Err(Error::FileNotOnAnyDisk(path))
+    }
+
+    pub fn try_delete_files<'b>(&'b self, paths: &'b [&Path]) -> Result<u64, Error<'b>> {
+        for disk in &self.disks {
+            let result = disk.try_delete_files(paths);
+            match result {
+                Err(Error::FilesNotAllOnDisk(_)) => continue,
+                _ => return result,
+            }
+        }
+
+        Err(Error::FilesNotOnSameDisk(paths))
     }
 
     pub fn read_file(&self, path: &Path, buf: &mut [u8]) {
