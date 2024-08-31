@@ -132,6 +132,14 @@ impl<ChunkAlloc: ChunkAllocator> BfsSettingsBuilder<ChunkAlloc> {
             return None;
         }
 
+        let update_files_compression_threshold = self.update_files_compression_threshold?;
+        if chunk_size_bytes as u64 >= update_files_compression_threshold {
+            // If this is the case then we would get stuck in an infinite loop when compressing
+            // update files, because the total file size after compressing would still be greater
+            // than the threshold.
+            return None;
+        }
+
         Some(BfsSettings {
             threads: self.threads,
             chunk_size_bytes: self.chunk_size_bytes?,
