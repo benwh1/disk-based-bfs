@@ -2,11 +2,12 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     path::PathBuf,
-    sync::{Arc, Condvar, Mutex, RwLock},
+    sync::Arc,
     thread::Builder as ThreadBuilder,
 };
 
 use cityhasher::{CityHasher, HashSet};
+use parking_lot::{Condvar, Mutex, RwLock};
 use rand::distributions::{Alphanumeric, DistString};
 use serde_derive::{Deserialize, Serialize};
 
@@ -346,23 +347,23 @@ impl<
                         .name(format!("compress-update-files-{t}"))
                         .spawn_scoped(s, move || loop {
                             let (lock, cvar) = &*pair;
-                            let mut has_work = lock.lock().unwrap();
+                            let mut has_work = lock.lock();
 
                             // Wait for work
                             while !*has_work {
-                                has_work = cvar.wait(has_work).unwrap();
+                                cvar.wait(&mut has_work);
                             }
 
                             *has_work = false;
                             drop(has_work);
 
                             // If everything is done, notify all and break
-                            let update_file_states_read = update_file_states.read().unwrap();
+                            let update_file_states_read = update_file_states.read();
                             if update_file_states_read
                                 .iter()
                                 .all(|&x| x == UpdateFileState::Compressed)
                             {
-                                *lock.lock().unwrap() = true;
+                                *lock.lock() = true;
                                 cvar.notify_all();
                                 break;
                             }
@@ -375,8 +376,7 @@ impl<
 
                             if let Some(chunk_idx) = chunk_idx {
                                 // Set the state to currently compressing
-                                let mut update_file_states_write =
-                                    update_file_states.write().unwrap();
+                                let mut update_file_states_write = update_file_states.write();
                                 if update_file_states_write[chunk_idx]
                                     == UpdateFileState::NotCompressing
                                 {
@@ -388,7 +388,7 @@ impl<
                                 }
                                 drop(update_file_states_write);
 
-                                *lock.lock().unwrap() = true;
+                                *lock.lock() = true;
                                 cvar.notify_one();
 
                                 // Get a chunk buffer
@@ -400,12 +400,11 @@ impl<
                                 self.chunk_buffers.put(chunk_buffer);
 
                                 // Mark the update files as compressed
-                                let mut update_file_states_write =
-                                    update_file_states.write().unwrap();
+                                let mut update_file_states_write = update_file_states.write();
                                 update_file_states_write[chunk_idx] = UpdateFileState::Compressed;
                                 drop(update_file_states_write);
 
-                                *lock.lock().unwrap() = true;
+                                *lock.lock() = true;
                                 cvar.notify_one();
                             }
                         })
@@ -414,7 +413,7 @@ impl<
                 .collect::<Vec<_>>();
 
             let (lock, cvar) = &*pair;
-            let mut has_work = lock.lock().unwrap();
+            let mut has_work = lock.lock();
             *has_work = true;
             cvar.notify_one();
             drop(has_work);
@@ -931,13 +930,13 @@ impl<
                         .name(format!("bfs-thread-{t}"))
                         .spawn_scoped(s, move || loop {
                             let (lock, cvar) = &*pair;
-                            let mut has_work = lock.lock().unwrap();
+                            let mut has_work = lock.lock();
 
                             tracing::debug!("waiting for work");
 
                             // Wait for work
                             while !*has_work {
-                                has_work = cvar.wait(has_work).unwrap();
+                                cvar.wait(&mut has_work);
                             }
 
                             tracing::debug!("checking for work");
@@ -946,19 +945,19 @@ impl<
                             drop(has_work);
 
                             // If everything is done, notify all and break
-                            let chunk_states_read = chunk_states.read().unwrap();
+                            let chunk_states_read = chunk_states.read();
                             if chunk_states_read
                                 .iter()
                                 .all(|&state| state == ChunkState::Expanded)
                             {
-                                *lock.lock().unwrap() = true;
+                                *lock.lock() = true;
                                 cvar.notify_all();
                                 break;
                             }
                             drop(chunk_states_read);
 
                             // Check for update files to compress
-                            let update_file_states_read = update_file_states.read().unwrap();
+                            let update_file_states_read = update_file_states.read();
                             let chunk_idx = update_file_states_read.iter().enumerate().find_map(
                                 |(i, state)| {
                                     if *state == UpdateFileState::CurrentlyCompressing {
@@ -987,8 +986,7 @@ impl<
 
                             if let Some(chunk_idx) = chunk_idx {
                                 // Set the state to currently compressing
-                                let mut update_file_states_write =
-                                    update_file_states.write().unwrap();
+                                let mut update_file_states_write = update_file_states.write();
                                 if update_file_states_write[chunk_idx]
                                     == UpdateFileState::NotCompressing
                                 {
@@ -1000,7 +998,7 @@ impl<
                                 }
                                 drop(update_file_states_write);
 
-                                *lock.lock().unwrap() = true;
+                                *lock.lock() = true;
                                 cvar.notify_one();
 
                                 // Get a chunk buffer
@@ -1009,8 +1007,7 @@ impl<
                                 self.compress_update_files(&mut chunk_buffer, depth + 2, chunk_idx);
 
                                 // Set the state back to not compressing
-                                let mut update_file_states_write =
-                                    update_file_states.write().unwrap();
+                                let mut update_file_states_write = update_file_states.write();
                                 update_file_states_write[chunk_idx] =
                                     UpdateFileState::NotCompressing;
                                 drop(update_file_states_write);
@@ -1018,13 +1015,13 @@ impl<
                                 // Put the chunk buffer back
                                 self.chunk_buffers.put(chunk_buffer);
 
-                                *lock.lock().unwrap() = true;
+                                *lock.lock() = true;
                                 cvar.notify_one();
                                 continue;
                             }
 
                             // Check for chunks to expand
-                            let chunk_states_read = chunk_states.read().unwrap();
+                            let chunk_states_read = chunk_states.read();
                             let chunk_idx = chunk_states_read
                                 .iter()
                                 .position(|&state| state == ChunkState::NotExpanded);
@@ -1032,7 +1029,7 @@ impl<
 
                             if let Some(chunk_idx) = chunk_idx {
                                 // Set the state to currently expanding
-                                let mut chunk_states_write = chunk_states.write().unwrap();
+                                let mut chunk_states_write = chunk_states.write();
                                 if chunk_states_write[chunk_idx] == ChunkState::NotExpanded {
                                     chunk_states_write[chunk_idx] = ChunkState::CurrentlyExpanding;
                                 } else {
@@ -1041,7 +1038,7 @@ impl<
                                 }
                                 drop(chunk_states_write);
 
-                                *lock.lock().unwrap() = true;
+                                *lock.lock() = true;
                                 cvar.notify_one();
 
                                 // Get a chunk buffer
@@ -1055,17 +1052,17 @@ impl<
                                     chunk_idx,
                                 );
 
-                                *new_states.lock().unwrap() += chunk_new;
+                                *new_states.lock() += chunk_new;
 
                                 // Set the state to expanded
-                                let mut chunk_states_write = chunk_states.write().unwrap();
+                                let mut chunk_states_write = chunk_states.write();
                                 chunk_states_write[chunk_idx] = ChunkState::Expanded;
                                 drop(chunk_states_write);
 
                                 // Put the chunk buffer back
                                 self.chunk_buffers.put(chunk_buffer);
 
-                                *lock.lock().unwrap() = true;
+                                *lock.lock() = true;
                                 cvar.notify_one();
                                 continue;
                             }
@@ -1075,7 +1072,7 @@ impl<
                 .collect::<Vec<_>>();
 
             let (lock, cvar) = &*pair;
-            let mut has_work = lock.lock().unwrap();
+            let mut has_work = lock.lock();
             *has_work = true;
             cvar.notify_one();
             drop(has_work);
@@ -1085,7 +1082,7 @@ impl<
 
         self.update_file_manager.write_all();
 
-        let new = *new_states.lock().unwrap();
+        let new = *new_states.lock();
         tracing::info!("depth {} new {new}", depth + 1);
 
         if self.settings.compress_update_files_at_end_of_iter {

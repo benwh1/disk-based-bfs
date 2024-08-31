@@ -1,4 +1,6 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 #[derive(Clone)]
 pub struct ChunkBufferList {
@@ -13,7 +15,7 @@ impl ChunkBufferList {
     }
 
     pub fn fill(&self, buffer_size: usize) {
-        let mut lock = self.buffers.lock().unwrap();
+        let mut lock = self.buffers.lock();
         for buf in lock.iter_mut() {
             if buf.is_none() {
                 buf.replace(vec![0; buffer_size]);
@@ -22,12 +24,12 @@ impl ChunkBufferList {
     }
 
     pub fn take(&self) -> Option<Vec<u8>> {
-        let mut lock = self.buffers.lock().unwrap();
+        let mut lock = self.buffers.lock();
         lock.iter_mut().find_map(|buf| buf.take())
     }
 
     pub fn put(&self, buffer: Vec<u8>) {
-        let mut lock = self.buffers.lock().unwrap();
+        let mut lock = self.buffers.lock();
         for buf in lock.iter_mut() {
             if buf.is_none() {
                 buf.replace(buffer);
