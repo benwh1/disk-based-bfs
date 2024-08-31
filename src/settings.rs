@@ -16,7 +16,7 @@ pub struct BfsSettingsBuilder<ChunkAlloc: ChunkAllocator> {
     buf_io_capacity: Option<usize>,
     use_locked_io: Option<bool>,
     sync_filesystem: Option<bool>,
-    compress_update_files_at_end_of_iter: Option<bool>,
+    compress_update_files_from_depth: Option<Option<usize>>,
 }
 
 impl<ChunkAlloc: ChunkAllocator> Default for BfsSettingsBuilder<ChunkAlloc> {
@@ -41,7 +41,7 @@ impl<ChunkAlloc: ChunkAllocator> BfsSettingsBuilder<ChunkAlloc> {
             buf_io_capacity: None,
             use_locked_io: None,
             sync_filesystem: None,
-            compress_update_files_at_end_of_iter: None,
+            compress_update_files_from_depth: None,
         }
     }
 
@@ -119,8 +119,8 @@ impl<ChunkAlloc: ChunkAllocator> BfsSettingsBuilder<ChunkAlloc> {
         self
     }
 
-    pub fn compress_update_files_at_end_of_iter(mut self, compress: bool) -> Self {
-        self.compress_update_files_at_end_of_iter = Some(compress);
+    pub fn compress_update_files_from_depth(mut self, depth: Option<usize>) -> Self {
+        self.compress_update_files_from_depth = Some(depth);
         self
     }
 
@@ -154,7 +154,7 @@ impl<ChunkAlloc: ChunkAllocator> BfsSettingsBuilder<ChunkAlloc> {
             buf_io_capacity: self.buf_io_capacity?,
             use_locked_io: self.use_locked_io?,
             sync_filesystem: self.sync_filesystem?,
-            compress_update_files_at_end_of_iter: self.compress_update_files_at_end_of_iter?,
+            compress_update_files_from_depth: self.compress_update_files_from_depth?,
         })
     }
 }
@@ -180,7 +180,7 @@ pub struct BfsSettings<ChunkAlloc: ChunkAllocator> {
     pub(crate) buf_io_capacity: usize,
     pub(crate) use_locked_io: bool,
     pub(crate) sync_filesystem: bool,
-    pub(crate) compress_update_files_at_end_of_iter: bool,
+    pub(crate) compress_update_files_from_depth: Option<usize>,
 }
 
 impl<ChunkAlloc: ChunkAllocator> BfsSettings<ChunkAlloc> {

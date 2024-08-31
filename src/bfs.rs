@@ -1085,7 +1085,11 @@ impl<
         let new = *new_states.lock();
         tracing::info!("depth {} new {new}", depth + 1);
 
-        if self.settings.compress_update_files_at_end_of_iter {
+        if self
+            .settings
+            .compress_update_files_from_depth
+            .map_or(false, |d| depth + 2 >= d)
+        {
             self.write_state(State::CompressAllUpdateFiles { depth });
             self.compress_all_update_files(depth + 2);
         }
@@ -1155,7 +1159,11 @@ impl<
 
                     self.chunk_buffers.fill(self.settings.chunk_size_bytes);
 
-                    if self.settings.compress_update_files_at_end_of_iter {
+                    if self
+                        .settings
+                        .compress_update_files_from_depth
+                        .map_or(false, |d| depth + 2 >= d)
+                    {
                         self.compress_all_update_files(depth + 2);
                     }
 
