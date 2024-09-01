@@ -287,7 +287,44 @@ impl<
         }
     }
 
+    fn has_update_files_to_compress(&self, depth: usize, chunk_idx: usize) -> bool {
+        if std::fs::read_dir(self.settings.update_chunk_dir_path(depth, chunk_idx))
+            .map(|read_dir| {
+                read_dir.flatten().map(|entry| entry.path()).any(|path| {
+                    let ext = path.extension().and_then(|ext| ext.to_str());
+                    ext == None || ext == Some("used")
+                })
+            })
+            .unwrap_or(false)
+        {
+            return true;
+        }
+
+        std::fs::read_dir(self.settings.update_array_chunk_dir_path(depth, chunk_idx))
+            .map(|read_dir| {
+                read_dir
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| {
+                        let ext = path.extension().and_then(|ext| ext.to_str());
+                        ext == None || ext == Some("used")
+                    })
+                    .count()
+                    > 1
+            })
+            .unwrap_or(false)
+    }
+
     fn compress_update_files(&self, update_buffer: &mut [u8], depth: usize, chunk_idx: usize) {
+        if !self.has_update_files_to_compress(depth, chunk_idx) {
+            tracing::debug!(
+                "nothing to compress for depth {} -> {} chunk {chunk_idx}, skipping",
+                depth - 1,
+                depth,
+            );
+            return;
+        }
+
         let used_space = self.update_file_manager.files_size(depth, chunk_idx);
         let gb = used_space as f64 / (1 << 30) as f64;
 
