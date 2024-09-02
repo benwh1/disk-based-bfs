@@ -9,12 +9,44 @@ impl AvailableUpdateBlock {
         }
     }
 
+    pub fn into_fillable(
+        self,
+        source_depth: usize,
+        source_chunk_idx: usize,
+    ) -> FillableUpdateBlock {
+        FillableUpdateBlock {
+            updates: self.updates,
+            source_depth,
+            source_chunk_idx,
+        }
+    }
+}
+
+pub struct FillableUpdateBlock {
+    updates: Vec<u32>,
+
+    // Depth and index of the chunk that these updates were generated from
+    source_depth: usize,
+    source_chunk_idx: usize,
+}
+
+impl FillableUpdateBlock {
     pub fn into_filled(self, depth: usize, chunk_idx: usize) -> FilledUpdateBlock {
         FilledUpdateBlock {
             updates: self.updates,
             depth,
             chunk_idx,
+            source_depth: self.source_depth,
+            source_chunk_idx: self.source_chunk_idx,
         }
+    }
+
+    pub fn source_depth(&self) -> usize {
+        self.source_depth
+    }
+
+    pub fn source_chunk_idx(&self) -> usize {
+        self.source_chunk_idx
     }
 
     pub fn push(&mut self, update: u32) {
@@ -33,10 +65,13 @@ impl AvailableUpdateBlock {
         self.updates.capacity()
     }
 }
+
 pub struct FilledUpdateBlock {
     updates: Vec<u32>,
     depth: usize,
     chunk_idx: usize,
+    source_depth: usize,
+    source_chunk_idx: usize,
 }
 
 impl FilledUpdateBlock {
@@ -46,6 +81,14 @@ impl FilledUpdateBlock {
         AvailableUpdateBlock {
             updates: self.updates,
         }
+    }
+
+    pub fn source_depth(&self) -> usize {
+        self.source_depth
+    }
+
+    pub fn source_chunk_idx(&self) -> usize {
+        self.source_chunk_idx
     }
 
     pub fn len(&self) -> usize {

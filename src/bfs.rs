@@ -17,7 +17,7 @@ use crate::{
     chunk_buffer_list::ChunkBufferList,
     io::{self, LockedIO},
     settings::BfsSettings,
-    update::{blocks::AvailableUpdateBlock, manager::UpdateManager},
+    update::{blocks::FillableUpdateBlock, manager::UpdateManager},
 };
 
 pub enum InMemoryBfsResult {
@@ -470,7 +470,10 @@ impl<
         let mut new_positions = 0;
         let mut updates = self
             .update_file_manager
-            .take_n(self.settings.num_array_chunks());
+            .take_n(self.settings.num_array_chunks())
+            .into_iter()
+            .map(|b| b.into_fillable(depth + 1, chunk_idx))
+            .collect::<Vec<_>>();
 
         let mut callback = self.callback.clone();
 
@@ -506,7 +509,7 @@ impl<
         new_positions
     }
 
-    fn check_update_vec_capacity(&self, updates: &mut [AvailableUpdateBlock], depth: usize) {
+    fn check_update_vec_capacity(&self, updates: &mut [FillableUpdateBlock], depth: usize) {
         // Check if any of the update vecs may go over capacity
         let max_new_nodes = self.settings.capacity_check_frequency * EXPANSION_NODES;
 
@@ -522,7 +525,7 @@ impl<
     fn update_and_expand_from_update_files(
         &self,
         chunk_buffer: &mut [u8],
-        updates: &mut [AvailableUpdateBlock],
+        updates: &mut [FillableUpdateBlock],
         callback: &mut Callback,
         depth: usize,
         chunk_idx: usize,
@@ -582,7 +585,7 @@ impl<
     fn update_and_expand_from_update_arrays(
         &self,
         chunk_buffer: &mut [u8],
-        updates: &mut [AvailableUpdateBlock],
+        updates: &mut [FillableUpdateBlock],
         callback: &mut Callback,
         depth: usize,
         chunk_idx: usize,

@@ -11,7 +11,7 @@ use crate::{
     chunk_allocator::ChunkAllocator,
     io::LockedIO,
     settings::BfsSettings,
-    update::blocks::{AvailableUpdateBlock, FilledUpdateBlock},
+    update::blocks::{AvailableUpdateBlock, FillableUpdateBlock, FilledUpdateBlock},
 };
 
 pub struct UpdateManager<'a, C: ChunkAllocator + Sync> {
@@ -383,7 +383,7 @@ impl<'a, C: ChunkAllocator + Sync> UpdateManager<'a, C> {
 
     pub fn mark_filled_and_replace(
         &self,
-        upd: &mut AvailableUpdateBlock,
+        upd: &mut FillableUpdateBlock,
         depth: usize,
         chunk_idx: usize,
     ) {
@@ -393,7 +393,9 @@ impl<'a, C: ChunkAllocator + Sync> UpdateManager<'a, C> {
             upd.capacity(),
         );
 
-        let new = self.take();
+        let new = self
+            .take()
+            .into_fillable(upd.source_depth(), upd.source_chunk_idx());
         let old = std::mem::replace(upd, new).into_filled(depth, chunk_idx);
         self.put(old);
     }
