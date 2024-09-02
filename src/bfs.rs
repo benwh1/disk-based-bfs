@@ -504,7 +504,8 @@ impl<
         // Force the updates to be written to disk - this is necessary otherwise it's possible that
         // this chunk will be deleted and the program terminated before the final updates are
         // written to disk
-        self.update_file_manager.write_all();
+        self.update_file_manager
+            .write_from_source(depth + 1, chunk_idx);
 
         new_positions
     }

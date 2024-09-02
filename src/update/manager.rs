@@ -46,11 +46,8 @@ impl<'a, C: ChunkAllocator + Sync> UpdateManager<'a, C> {
         }
     }
 
-    pub fn write_all(&self) {
-        let mut filled_blocks_lock = self.filled_blocks.lock().unwrap();
-        let mut filled_blocks = std::mem::take(&mut *filled_blocks_lock);
-        drop(filled_blocks_lock);
-
+    /// Write filled blocks to disk and put them back in `self.available_blocks`
+    pub fn write_and_put(&self, mut filled_blocks: Vec<FilledUpdateBlock>) {
         if filled_blocks.is_empty() {
             return;
         }
@@ -167,6 +164,33 @@ impl<'a, C: ChunkAllocator + Sync> UpdateManager<'a, C> {
                 drop(sizes_lock);
             }
         }
+    }
+
+    pub fn write_all(&self) {
+        let mut filled_blocks_lock = self.filled_blocks.lock().unwrap();
+        let filled_blocks = std::mem::take(&mut *filled_blocks_lock);
+        drop(filled_blocks_lock);
+
+        self.write_and_put(filled_blocks);
+    }
+
+    /// Write all blocks that have the given `source_depth` and `source_chunk_idx`
+    pub fn write_from_source(&self, source_depth: usize, source_chunk_idx: usize) {
+        let mut filled_blocks_lock = self.filled_blocks.lock().unwrap();
+        let filled_blocks = std::mem::take(&mut *filled_blocks_lock);
+
+        // Separate out the blocks that we will write to disk
+        let (to_write, mut to_keep): (Vec<_>, Vec<_>) =
+            filled_blocks.into_iter().partition(|block| {
+                block.source_depth() == source_depth && block.source_chunk_idx() == source_chunk_idx
+            });
+
+        // Return the blocks that we're not writing to disk back to `self.filled_blocks`
+        std::mem::swap(&mut *filled_blocks_lock, &mut to_keep);
+
+        drop(filled_blocks_lock);
+
+        self.write_and_put(to_write);
     }
 
     fn take_impl(&self, log: bool) -> AvailableUpdateBlock {
