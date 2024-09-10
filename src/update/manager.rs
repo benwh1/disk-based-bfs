@@ -192,12 +192,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         self.write_and_put(to_write);
     }
 
-    fn take_impl(&self, log: bool) -> AvailableUpdateBlock {
-        if log {
-            let blocks_remaining = self.available_blocks.lock().unwrap().len();
-            tracing::trace!("taking update block, {blocks_remaining} blocks remaining");
-        }
-
+    fn take(&self) -> AvailableUpdateBlock {
         loop {
             if let Some(block) = self.available_blocks.lock().unwrap().pop() {
                 return block;
@@ -205,10 +200,6 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
             self.write_all();
         }
-    }
-
-    fn take(&self) -> AvailableUpdateBlock {
-        self.take_impl(true)
     }
 
     /// Note: the sizes are not guaranteed to be *exactly* correct, because it's possible that we
@@ -242,13 +233,10 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
     }
 
     pub fn take_n(&self, n: usize) -> Vec<AvailableUpdateBlock> {
-        let blocks_remaining = self.available_blocks.lock().unwrap().len();
-        tracing::trace!("taking {n} update blocks, {blocks_remaining} blocks remaining");
-
         let mut blocks = Vec::with_capacity(n);
 
         for _ in 0..n {
-            let block = self.take_impl(false);
+            let block = self.take();
             blocks.push(block);
         }
 
