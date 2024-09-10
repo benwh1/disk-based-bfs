@@ -381,7 +381,10 @@ impl<
                     let pair = pair.clone();
 
                     ThreadBuilder::new()
-                        .name(format!("compress-update-files-{t}"))
+                        .name({
+                            let digits = self.settings.threads.ilog10() as usize + 1;
+                            format!("compress-update-files-{t:0>digits$}")
+                        })
                         .spawn_scoped(s, move || loop {
                             let (lock, cvar) = &*pair;
                             let mut has_work = lock.lock();
@@ -680,7 +683,10 @@ impl<
                         let old = &old;
 
                         ThreadBuilder::new()
-                            .name(format!("in-memory-bfs-{t}"))
+                            .name({
+                                let digits = self.settings.threads.ilog10() as usize + 1;
+                                format!("in-memory-bfs-{t:0>digits$}")
+                            })
                             .spawn_scoped(s, move || {
                                 let mut expander = self.expander.clone();
 
@@ -968,7 +974,10 @@ impl<
                     let pair = pair.clone();
 
                     ThreadBuilder::new()
-                        .name(format!("bfs-thread-{t}"))
+                        .name({
+                            let digits = self.settings.threads.ilog10() as usize + 1;
+                            format!("bfs-{t:0>digits$}")
+                        })
                         .spawn_scoped(s, move || loop {
                             let (lock, cvar) = &*pair;
                             let mut has_work = lock.lock();
