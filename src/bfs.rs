@@ -444,6 +444,10 @@ impl<
                                 update_file_states_write[chunk_idx] = UpdateFileState::Compressed;
                                 drop(update_file_states_write);
 
+                                // Delete (now empty) update files directory
+                                self.update_file_manager
+                                    .delete_update_files(depth, chunk_idx);
+
                                 *lock.lock() = true;
                                 cvar.notify_one();
                             }
