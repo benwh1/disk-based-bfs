@@ -351,6 +351,16 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         self.delete_update_arrays_impl(depth, chunk_idx, true);
     }
 
+    pub fn back_up_update_arrays(&self, depth: usize, chunk_idx: usize) {
+        let dir_path = self.settings.update_array_chunk_dir_path(depth, chunk_idx);
+        let backup_dir_path = self
+            .settings
+            .backup_update_array_chunk_dir_path(depth, chunk_idx);
+
+        std::fs::create_dir_all(&backup_dir_path).unwrap();
+        std::fs::rename(&dir_path, &backup_dir_path).unwrap();
+    }
+
     pub fn write_update_array(&self, update_buffer: &[u8], depth: usize, chunk_idx: usize) {
         let dir_path = self.settings.update_array_chunk_dir_path(depth, chunk_idx);
         std::fs::create_dir_all(&dir_path).unwrap();

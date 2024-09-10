@@ -1,8 +1,28 @@
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateFilesBehavior {
+    DontCompress,
+    CompressAndDelete,
+    CompressAndKeep,
+}
+
+impl UpdateFilesBehavior {
+    pub fn should_compress(self) -> bool {
+        matches!(self, Self::CompressAndDelete | Self::CompressAndKeep)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChunkFilesBehavior {
+    Delete,
+    Keep,
+}
+
 pub trait BfsSettingsProvider {
     fn chunk_root_idx(&self, chunk_idx: usize) -> usize;
-    fn compress_update_files(&self, depth: usize) -> bool;
+    fn update_files_behavior(&self, depth: usize) -> UpdateFilesBehavior;
+    fn chunk_files_behavior(&self, depth: usize) -> ChunkFilesBehavior;
 }
 
 pub struct BfsSettingsBuilder<P: BfsSettingsProvider> {
@@ -224,6 +244,17 @@ impl<P: BfsSettingsProvider> BfsSettings<P> {
             .join(format!("chunk-{chunk_idx}.dat"))
     }
 
+    pub fn backup_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+        self.root_dir(chunk_idx)
+            .join("backup-array")
+            .join(format!("depth-{depth}"))
+    }
+
+    pub fn backup_chunk_file_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+        self.backup_chunk_dir_path(depth, chunk_idx)
+            .join(format!("chunk-{chunk_idx}.dat"))
+    }
+
     pub fn update_array_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.root_dir(chunk_idx)
             .join("update-array")
@@ -232,6 +263,17 @@ impl<P: BfsSettingsProvider> BfsSettings<P> {
 
     pub fn update_array_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.update_array_dir_path(depth, chunk_idx)
+            .join(format!("update-chunk-{chunk_idx}"))
+    }
+
+    pub fn backup_update_array_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+        self.root_dir(chunk_idx)
+            .join("backup-update-array")
+            .join(format!("depth-{depth}"))
+    }
+
+    pub fn backup_update_array_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+        self.backup_update_array_dir_path(depth, chunk_idx)
             .join(format!("update-chunk-{chunk_idx}"))
     }
 

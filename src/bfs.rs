@@ -14,7 +14,7 @@ use crate::{
     callback::BfsCallback,
     chunk_buffer_list::ChunkBufferList,
     io::{self, LockedIO},
-    settings::{BfsSettings, BfsSettingsProvider},
+    settings::{BfsSettings, BfsSettingsProvider, ChunkFilesBehavior, UpdateFilesBehavior},
     update::{blocks::FillableUpdateBlock, manager::UpdateManager},
 };
 
@@ -160,6 +160,16 @@ impl<
         if file_path.exists() {
             self.locked_io.try_delete_file(&file_path).unwrap();
         }
+    }
+
+    fn back_up_chunk_file(&self, depth: usize, chunk_idx: usize) {
+        let backup_dir_path = self.settings.backup_chunk_dir_path(depth, chunk_idx);
+        std::fs::create_dir_all(&backup_dir_path).unwrap();
+
+        let file_path = self.settings.chunk_file_path(depth, chunk_idx);
+        let backup_file_path = self.settings.backup_chunk_file_path(depth, chunk_idx);
+
+        std::fs::rename(file_path, backup_file_path).unwrap();
     }
 
     fn mark_chunk_exhausted(&self, depth: usize, chunk_idx: usize) {
@@ -870,8 +880,16 @@ impl<
             io::sync();
         }
 
-        tracing::debug!("deleting depth {depth} chunk {chunk_idx}");
-        self.delete_chunk_file(depth, chunk_idx);
+        match self.settings.settings_provider.chunk_files_behavior(depth) {
+            ChunkFilesBehavior::Delete => {
+                tracing::debug!("deleting depth {depth} chunk {chunk_idx}");
+                self.delete_chunk_file(depth, chunk_idx);
+            }
+            ChunkFilesBehavior::Keep => {
+                tracing::debug!("backing up depth {depth} chunk {chunk_idx}");
+                self.back_up_chunk_file(depth, chunk_idx);
+            }
+        }
 
         tracing::debug!(
             "deleting update files for depth {depth} -> {} chunk {chunk_idx}",
@@ -880,12 +898,28 @@ impl<
         self.update_file_manager
             .delete_update_files(depth + 1, chunk_idx);
 
-        tracing::debug!(
-            "deleting update arrays for depth {depth} -> {} chunk {chunk_idx}",
-            depth + 1,
-        );
-        self.update_file_manager
-            .delete_update_arrays(depth + 1, chunk_idx);
+        match self
+            .settings
+            .settings_provider
+            .update_files_behavior(depth + 1)
+        {
+            UpdateFilesBehavior::DontCompress | UpdateFilesBehavior::CompressAndDelete => {
+                tracing::debug!(
+                    "deleting update arrays for depth {depth} -> {} chunk {chunk_idx}",
+                    depth + 1,
+                );
+                self.update_file_manager
+                    .delete_update_arrays(depth + 1, chunk_idx);
+            }
+            UpdateFilesBehavior::CompressAndKeep => {
+                tracing::debug!(
+                    "backing up update arrays for depth {depth} -> {} chunk {chunk_idx}",
+                    depth + 1,
+                );
+                self.update_file_manager
+                    .back_up_update_arrays(depth + 1, chunk_idx);
+            }
+        }
 
         new
     }
@@ -1131,7 +1165,8 @@ impl<
         if self
             .settings
             .settings_provider
-            .compress_update_files(depth + 2)
+            .update_files_behavior(depth + 2)
+            .should_compress()
         {
             self.write_state(State::CompressAllUpdateFiles { depth });
             self.compress_all_update_files(depth + 2);
@@ -1205,7 +1240,8 @@ impl<
                     if self
                         .settings
                         .settings_provider
-                        .compress_update_files(depth + 2)
+                        .update_files_behavior(depth + 2)
+                        .should_compress()
                     {
                         self.compress_all_update_files(depth + 2);
                     }
