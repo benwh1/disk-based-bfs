@@ -1,7 +1,6 @@
 use std::{
     fs::File,
     io::{BufWriter, Write},
-    path::PathBuf,
     sync::Arc,
     thread::Builder as ThreadBuilder,
 };
@@ -164,25 +163,16 @@ impl<
         }
     }
 
-    fn exhausted_chunk_dir_path(&self) -> PathBuf {
-        self.settings.root_dir(0).join("exhausted-chunks")
-    }
-
-    fn exhausted_chunk_file_path(&self, chunk_idx: usize) -> PathBuf {
-        self.exhausted_chunk_dir_path()
-            .join(format!("chunk-{chunk_idx}.dat"))
-    }
-
     fn mark_chunk_exhausted(&self, depth: usize, chunk_idx: usize) {
-        let dir_path = self.exhausted_chunk_dir_path();
+        let dir_path = self.settings.exhausted_chunk_dir_path();
         std::fs::create_dir_all(&dir_path).unwrap();
 
-        let file_path = self.exhausted_chunk_file_path(chunk_idx);
+        let file_path = self.settings.exhausted_chunk_file_path(chunk_idx);
         self.locked_io.write_file(&file_path, &depth.to_le_bytes());
     }
 
     fn chunk_exhausted_depth(&self, chunk_idx: usize) -> Option<usize> {
-        let file_path = self.exhausted_chunk_file_path(chunk_idx);
+        let file_path = self.settings.exhausted_chunk_file_path(chunk_idx);
         let mut buf = [0u8; std::mem::size_of::<usize>()];
 
         if self.locked_io.try_read_file(&file_path, &mut buf).is_err() {

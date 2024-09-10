@@ -261,4 +261,13 @@ impl<ChunkAlloc: ChunkAllocator> BfsSettings<ChunkAlloc> {
         self.new_positions_data_dir_path(depth)
             .join(format!("chunk-{chunk_idx}.dat"))
     }
+
+    pub fn exhausted_chunk_dir_path(&self) -> PathBuf {
+        self.root_dir(0).join("exhausted-chunks")
+    }
+
+    pub fn exhausted_chunk_file_path(&self, chunk_idx: usize) -> PathBuf {
+        self.exhausted_chunk_dir_path()
+            .join(format!("chunk-{chunk_idx}.dat"))
+    }
 }
