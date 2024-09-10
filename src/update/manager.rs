@@ -8,23 +8,22 @@ use itertools::Itertools;
 use rand::distributions::{Alphanumeric, DistString as _};
 
 use crate::{
-    chunk_allocator::ChunkAllocator,
     io::LockedIO,
-    settings::BfsSettings,
+    settings::{BfsSettings, BfsSettingsProvider},
     update::blocks::{AvailableUpdateBlock, FillableUpdateBlock, FilledUpdateBlock},
 };
 
-pub struct UpdateManager<'a, C: ChunkAllocator + Sync> {
-    settings: &'a BfsSettings<C>,
-    locked_io: &'a LockedIO<'a, C>,
+pub struct UpdateManager<'a, P: BfsSettingsProvider + Sync> {
+    settings: &'a BfsSettings<P>,
+    locked_io: &'a LockedIO<'a, P>,
     sizes: RwLock<HashMap<usize, Vec<u64>>>,
     size_file_lock: Mutex<()>,
     available_blocks: Mutex<Vec<AvailableUpdateBlock>>,
     filled_blocks: Mutex<Vec<FilledUpdateBlock>>,
 }
 
-impl<'a, C: ChunkAllocator + Sync> UpdateManager<'a, C> {
-    pub fn new(settings: &'a BfsSettings<C>, locked_io: &'a LockedIO<C>) -> Self {
+impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
+    pub fn new(settings: &'a BfsSettings<P>, locked_io: &'a LockedIO<P>) -> Self {
         let num_blocks = 2 * settings.threads * settings.num_array_chunks();
 
         tracing::debug!("creating {num_blocks} update blocks");
@@ -62,7 +61,7 @@ impl<'a, C: ChunkAllocator + Sync> UpdateManager<'a, C> {
         for block in filled_blocks.drain(..) {
             let chunk_root_idx = self
                 .settings
-                .chunk_allocator
+                .settings_provider
                 .chunk_root_idx(block.chunk_idx());
             chunked_filled_blocks[chunk_root_idx].push(block);
         }

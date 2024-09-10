@@ -12,10 +12,9 @@ use serde_derive::{Deserialize, Serialize};
 
 use crate::{
     callback::BfsCallback,
-    chunk_allocator::ChunkAllocator,
     chunk_buffer_list::ChunkBufferList,
     io::{self, LockedIO},
-    settings::BfsSettings,
+    settings::{BfsSettings, BfsSettingsProvider},
     update::{blocks::FillableUpdateBlock, manager::UpdateManager},
 };
 
@@ -41,28 +40,28 @@ pub struct Bfs<
     'a,
     Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
     Callback: BfsCallback + Clone + Sync,
-    ChunkAlloc: ChunkAllocator + Sync,
+    P: BfsSettingsProvider + Sync,
     const EXPANSION_NODES: usize,
 > {
-    settings: &'a BfsSettings<ChunkAlloc>,
-    locked_io: &'a LockedIO<'a, ChunkAlloc>,
+    settings: &'a BfsSettings<P>,
+    locked_io: &'a LockedIO<'a, P>,
     expander: Expander,
     callback: Callback,
     chunk_buffers: ChunkBufferList,
-    update_file_manager: UpdateManager<'a, ChunkAlloc>,
+    update_file_manager: UpdateManager<'a, P>,
 }
 
 impl<
         'a,
         Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
         Callback: BfsCallback + Clone + Sync,
-        ChunkAlloc: ChunkAllocator + Sync,
+        P: BfsSettingsProvider + Sync,
         const EXPANSION_NODES: usize,
-    > Bfs<'a, Expander, Callback, ChunkAlloc, EXPANSION_NODES>
+    > Bfs<'a, Expander, Callback, P, EXPANSION_NODES>
 {
     pub fn new(
-        settings: &'a BfsSettings<ChunkAlloc>,
-        locked_io: &'a LockedIO<ChunkAlloc>,
+        settings: &'a BfsSettings<P>,
+        locked_io: &'a LockedIO<P>,
         expander: Expander,
         callback: Callback,
     ) -> Self {
@@ -1131,8 +1130,8 @@ impl<
 
         if self
             .settings
-            .compress_update_files_from_depth
-            .map_or(false, |d| depth + 2 >= d)
+            .settings_provider
+            .compress_update_files(depth + 2)
         {
             self.write_state(State::CompressAllUpdateFiles { depth });
             self.compress_all_update_files(depth + 2);
@@ -1205,8 +1204,8 @@ impl<
 
                     if self
                         .settings
-                        .compress_update_files_from_depth
-                        .map_or(false, |d| depth + 2 >= d)
+                        .settings_provider
+                        .compress_update_files(depth + 2)
                     {
                         self.compress_all_update_files(depth + 2);
                     }

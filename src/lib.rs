@@ -7,7 +7,6 @@
 
 pub mod bfs;
 pub mod callback;
-pub mod chunk_allocator;
 pub mod chunk_buffer_list;
 pub mod io;
 pub mod settings;

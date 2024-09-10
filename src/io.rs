@@ -7,7 +7,7 @@ use std::{
 
 use thiserror::Error;
 
-use crate::{chunk_allocator::ChunkAllocator, settings::BfsSettings};
+use crate::settings::{BfsSettings, BfsSettingsProvider};
 
 #[derive(Debug, Error)]
 pub enum Error<'a> {
@@ -27,14 +27,14 @@ pub enum Error<'a> {
     IoError(#[from] std::io::Error),
 }
 
-pub struct LockedDisk<'a, C: ChunkAllocator> {
-    settings: &'a BfsSettings<C>,
+pub struct LockedDisk<'a, P: BfsSettingsProvider> {
+    settings: &'a BfsSettings<P>,
     lock: Mutex<()>,
     disk_path: PathBuf,
 }
 
-impl<'a, C: ChunkAllocator> LockedDisk<'a, C> {
-    pub fn new(settings: &'a BfsSettings<C>, disk_path: PathBuf) -> Self {
+impl<'a, P: BfsSettingsProvider> LockedDisk<'a, P> {
+    pub fn new(settings: &'a BfsSettings<P>, disk_path: PathBuf) -> Self {
         Self {
             settings,
             lock: Mutex::new(()),
@@ -166,12 +166,12 @@ impl<'a, C: ChunkAllocator> LockedDisk<'a, C> {
     }
 }
 
-pub struct LockedIO<'a, C: ChunkAllocator> {
-    disks: Vec<LockedDisk<'a, C>>,
+pub struct LockedIO<'a, P: BfsSettingsProvider> {
+    disks: Vec<LockedDisk<'a, P>>,
 }
 
-impl<'a, C: ChunkAllocator> LockedIO<'a, C> {
-    pub fn new(settings: &'a BfsSettings<C>, disk_paths: Vec<PathBuf>) -> Self {
+impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
+    pub fn new(settings: &'a BfsSettings<P>, disk_paths: Vec<PathBuf>) -> Self {
         let disks = disk_paths
             .into_iter()
             .map(|disk_path| LockedDisk::new(settings, disk_path))

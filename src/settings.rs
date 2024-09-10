@@ -1,8 +1,11 @@
 use std::path::{Path, PathBuf};
 
-use crate::chunk_allocator::{ChunkAllocator, Uniform};
+pub trait BfsSettingsProvider {
+    fn chunk_root_idx(&self, chunk_idx: usize) -> usize;
+    fn compress_update_files(&self, depth: usize) -> bool;
+}
 
-pub struct BfsSettingsBuilder<ChunkAlloc: ChunkAllocator> {
+pub struct BfsSettingsBuilder<P: BfsSettingsProvider> {
     threads: usize,
     chunk_size_bytes: Option<usize>,
     update_memory: Option<usize>,
@@ -10,22 +13,21 @@ pub struct BfsSettingsBuilder<ChunkAlloc: ChunkAllocator> {
     initial_states: Option<Vec<u64>>,
     state_size: Option<u64>,
     root_directories: Option<Vec<PathBuf>>,
-    chunk_allocator: Option<ChunkAlloc>,
     initial_memory_limit: Option<usize>,
     update_files_compression_threshold: Option<u64>,
     buf_io_capacity: Option<usize>,
     use_locked_io: Option<bool>,
     sync_filesystem: Option<bool>,
-    compress_update_files_from_depth: Option<Option<usize>>,
+    settings_provider: Option<P>,
 }
 
-impl<ChunkAlloc: ChunkAllocator> Default for BfsSettingsBuilder<ChunkAlloc> {
+impl<P: BfsSettingsProvider> Default for BfsSettingsBuilder<P> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<ChunkAlloc: ChunkAllocator> BfsSettingsBuilder<ChunkAlloc> {
+impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
     pub fn new() -> Self {
         Self {
             threads: 1,
@@ -35,13 +37,12 @@ impl<ChunkAlloc: ChunkAllocator> BfsSettingsBuilder<ChunkAlloc> {
             initial_states: None,
             state_size: None,
             root_directories: None,
-            chunk_allocator: None,
             initial_memory_limit: None,
             update_files_compression_threshold: None,
             buf_io_capacity: None,
             use_locked_io: None,
             sync_filesystem: None,
-            compress_update_files_from_depth: None,
+            settings_provider: None,
         }
     }
 
@@ -83,14 +84,6 @@ impl<ChunkAlloc: ChunkAllocator> BfsSettingsBuilder<ChunkAlloc> {
         self
     }
 
-    pub fn chunk_allocator(
-        mut self,
-        chunk_allocator: ChunkAlloc,
-    ) -> BfsSettingsBuilder<ChunkAlloc> {
-        self.chunk_allocator = Some(chunk_allocator);
-        self
-    }
-
     pub fn initial_memory_limit(mut self, initial_memory_limit: usize) -> Self {
         self.initial_memory_limit = Some(initial_memory_limit);
         self
@@ -119,12 +112,12 @@ impl<ChunkAlloc: ChunkAllocator> BfsSettingsBuilder<ChunkAlloc> {
         self
     }
 
-    pub fn compress_update_files_from_depth(mut self, depth: Option<usize>) -> Self {
-        self.compress_update_files_from_depth = Some(depth);
+    pub fn settings_provider(mut self, settings_provider: P) -> Self {
+        self.settings_provider = Some(settings_provider);
         self
     }
 
-    pub fn build(self) -> Option<BfsSettings<ChunkAlloc>> {
+    pub fn build(self) -> Option<BfsSettings<P>> {
         // Require that all chunks are the same size
         let chunk_size_bytes = self.chunk_size_bytes?;
         let state_size = self.state_size? as usize;
@@ -148,25 +141,17 @@ impl<ChunkAlloc: ChunkAllocator> BfsSettingsBuilder<ChunkAlloc> {
             initial_states: self.initial_states?,
             state_size: self.state_size?,
             root_directories: self.root_directories?,
-            chunk_allocator: self.chunk_allocator?,
             initial_memory_limit: self.initial_memory_limit?,
             update_files_compression_threshold: self.update_files_compression_threshold?,
             buf_io_capacity: self.buf_io_capacity?,
             use_locked_io: self.use_locked_io?,
             sync_filesystem: self.sync_filesystem?,
-            compress_update_files_from_depth: self.compress_update_files_from_depth?,
+            settings_provider: self.settings_provider?,
         })
     }
 }
 
-impl BfsSettingsBuilder<Uniform> {
-    pub fn uniform_chunk_allocator(self) -> Self {
-        let n = self.root_directories.as_ref().unwrap().len();
-        self.chunk_allocator(Uniform(n))
-    }
-}
-
-pub struct BfsSettings<ChunkAlloc: ChunkAllocator> {
+pub struct BfsSettings<P: BfsSettingsProvider> {
     pub(crate) threads: usize,
     pub(crate) chunk_size_bytes: usize,
     pub(crate) update_memory: usize,
@@ -174,16 +159,15 @@ pub struct BfsSettings<ChunkAlloc: ChunkAllocator> {
     pub(crate) initial_states: Vec<u64>,
     pub(crate) state_size: u64,
     pub(crate) root_directories: Vec<PathBuf>,
-    pub(crate) chunk_allocator: ChunkAlloc,
     pub(crate) initial_memory_limit: usize,
     pub(crate) update_files_compression_threshold: u64,
     pub(crate) buf_io_capacity: usize,
     pub(crate) use_locked_io: bool,
     pub(crate) sync_filesystem: bool,
-    pub(crate) compress_update_files_from_depth: Option<usize>,
+    pub(crate) settings_provider: P,
 }
 
-impl<ChunkAlloc: ChunkAllocator> BfsSettings<ChunkAlloc> {
+impl<P: BfsSettingsProvider> BfsSettings<P> {
     pub fn array_bytes(&self) -> usize {
         self.state_size.div_ceil(8) as usize
     }
@@ -206,7 +190,7 @@ impl<ChunkAlloc: ChunkAllocator> BfsSettings<ChunkAlloc> {
     }
 
     pub fn root_dir(&self, chunk_idx: usize) -> &Path {
-        let chunk_root_idx = self.chunk_allocator.chunk_root_idx(chunk_idx);
+        let chunk_root_idx = self.settings_provider.chunk_root_idx(chunk_idx);
         &self.root_directories[chunk_root_idx]
     }
 
