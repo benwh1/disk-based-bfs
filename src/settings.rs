@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use thiserror::Error;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateFilesBehavior {
     DontCompress,
@@ -25,11 +27,88 @@ pub trait BfsSettingsProvider {
     fn chunk_files_behavior(&self, depth: usize) -> ChunkFilesBehavior;
 }
 
+#[derive(Debug, Error)]
+pub enum BfsSettingsError {
+    #[error("`chunk_size_bytes` not set")]
+    ChunkSizeBytesNotSet,
+
+    #[error("`update_memory` not set")]
+    UpdateMemoryNotSet,
+
+    #[error("`num_update_blocks` not set")]
+    NumUpdateBlocksNotSet,
+
+    #[error("`capacity_check_frequency` not set")]
+    CapacityCheckFrequencyNotSet,
+
+    #[error("`initial_states` not set")]
+    InitialStatesNotSet,
+
+    #[error("`state_size` not set")]
+    StateSizeNotSet,
+
+    #[error("`root_directories` not set")]
+    RootDirectoriesNotSet,
+
+    #[error("`initial_memory_limit` not set")]
+    InitialMemoryLimitNotSet,
+
+    #[error("`update_files_compression_threshold` not set")]
+    UpdateFilesCompressionThresholdNotSet,
+
+    #[error("`buf_io_capacity` not set")]
+    BufIoCapacityNotSet,
+
+    #[error("`use_locked_io` not set")]
+    UseLockedIoNotSet,
+
+    #[error("`sync_filesystem` not set")]
+    SyncFilesystemNotSet,
+
+    #[error("`compute_checksums` not set")]
+    ComputeChecksumsNotSet,
+
+    #[error("`settings_provider` not set")]
+    SettingsProviderNotSet,
+
+    #[error("Chunk size ({chunk_size_bytes}) must be less than 2^29 = 536870912 bytes")]
+    ChunkSizeTooLarge { chunk_size_bytes: usize },
+
+    #[error(
+        "State size ({state_size}) must be divisible by 8 * chunk size ({})",
+        8 * chunk_size_bytes,
+    )]
+    ChunksNotSameSize {
+        state_size: u64,
+        chunk_size_bytes: usize,
+    },
+
+    #[error(
+        "Update files compression threshold ({update_files_compression_threshold}) must be \
+        greater than chunk size ({chunk_size_bytes})"
+    )]
+    UpdateCompressionThresholdTooSmall {
+        update_files_compression_threshold: u64,
+        chunk_size_bytes: usize,
+    },
+
+    #[error(
+        "Number of update blocks ({num_update_blocks}) must be greater than threads * num chunks \
+        ({})",
+        threads * num_chunks,
+    )]
+    UpdateVecsTooLarge {
+        num_update_blocks: usize,
+        threads: usize,
+        num_chunks: usize,
+    },
+}
+
 pub struct BfsSettingsBuilder<P: BfsSettingsProvider> {
     threads: usize,
     chunk_size_bytes: Option<usize>,
     update_memory: Option<usize>,
-    update_vec_capacity: Option<usize>,
+    num_update_blocks: Option<usize>,
     capacity_check_frequency: Option<usize>,
     initial_states: Option<Vec<u64>>,
     state_size: Option<u64>,
@@ -55,7 +134,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             threads: 1,
             chunk_size_bytes: None,
             update_memory: None,
-            update_vec_capacity: None,
+            num_update_blocks: None,
             capacity_check_frequency: None,
             initial_states: None,
             state_size: None,
@@ -76,10 +155,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
     }
 
     pub fn chunk_size_bytes(mut self, chunk_size_bytes: usize) -> Self {
-        // Limit to 2^29 bytes so that we can store 32 bit values in the update files
-        if chunk_size_bytes < 1 << 29 {
-            self.chunk_size_bytes = Some(chunk_size_bytes);
-        }
+        self.chunk_size_bytes = Some(chunk_size_bytes);
         self
     }
 
@@ -88,8 +164,8 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
         self
     }
 
-    pub fn update_vec_capacity(mut self, update_vec_capacity: usize) -> Self {
-        self.update_vec_capacity = Some(update_vec_capacity);
+    pub fn num_update_blocks(mut self, num_update_blocks: usize) -> Self {
+        self.num_update_blocks = Some(num_update_blocks);
         self
     }
 
@@ -151,47 +227,87 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
         self
     }
 
-    pub fn build(self) -> Option<BfsSettings<P>> {
-        // Require that all chunks are the same size
-        let chunk_size_bytes = self.chunk_size_bytes?;
-        let state_size = self.state_size? as usize;
-        if state_size % (8 * chunk_size_bytes) != 0 {
-            return None;
+    pub fn build(self) -> Result<BfsSettings<P>, BfsSettingsError> {
+        // Limit to 2^29 bytes so that we can store 32 bit values in the update files
+        let chunk_size_bytes = self
+            .chunk_size_bytes
+            .ok_or(BfsSettingsError::ChunkSizeBytesNotSet)?;
+        if chunk_size_bytes > 1 << 29 {
+            return Err(BfsSettingsError::ChunkSizeTooLarge { chunk_size_bytes });
         }
 
-        let update_files_compression_threshold = self.update_files_compression_threshold?;
+        // Require that all chunks are the same size
+        let state_size = self.state_size.ok_or(BfsSettingsError::StateSizeNotSet)?;
+        if state_size as usize % (8 * chunk_size_bytes) != 0 {
+            return Err(BfsSettingsError::ChunksNotSameSize {
+                state_size,
+                chunk_size_bytes,
+            });
+        }
+
+        let update_files_compression_threshold = self
+            .update_files_compression_threshold
+            .ok_or(BfsSettingsError::UpdateFilesCompressionThresholdNotSet)?;
         if chunk_size_bytes as u64 >= update_files_compression_threshold {
             // If this is the case then we would get stuck in an infinite loop when compressing
             // update files, because the total file size after compressing would still be greater
             // than the threshold.
-            return None;
+            return Err(BfsSettingsError::UpdateCompressionThresholdTooSmall {
+                update_files_compression_threshold,
+                chunk_size_bytes,
+            });
         }
 
         // Each thread can hold one update vec per chunk, so we need more than (threads * chunks)
         // update vecs in total
-        let num_update_vecs =
-            self.update_memory? / (self.update_vec_capacity? * std::mem::size_of::<u32>());
-        let num_chunks = state_size / (8 * chunk_size_bytes);
-        if num_update_vecs <= self.threads * num_chunks {
-            return None;
+        let num_update_blocks = self
+            .num_update_blocks
+            .ok_or(BfsSettingsError::NumUpdateBlocksNotSet)?;
+        let num_chunks = state_size as usize / (8 * chunk_size_bytes);
+        if num_update_blocks <= self.threads * num_chunks {
+            return Err(BfsSettingsError::UpdateVecsTooLarge {
+                num_update_blocks,
+                threads: self.threads,
+                num_chunks,
+            });
         }
 
-        Some(BfsSettings {
+        Ok(BfsSettings {
             threads: self.threads,
-            chunk_size_bytes: self.chunk_size_bytes?,
-            update_memory: self.update_memory?,
-            update_vec_capacity: self.update_vec_capacity?,
-            capacity_check_frequency: self.capacity_check_frequency?,
-            initial_states: self.initial_states?,
-            state_size: self.state_size?,
-            root_directories: self.root_directories?,
-            initial_memory_limit: self.initial_memory_limit?,
-            update_files_compression_threshold: self.update_files_compression_threshold?,
-            buf_io_capacity: self.buf_io_capacity?,
-            use_locked_io: self.use_locked_io?,
-            sync_filesystem: self.sync_filesystem?,
-            compute_checksums: self.compute_checksums?,
-            settings_provider: self.settings_provider?,
+            chunk_size_bytes,
+            update_memory: self
+                .update_memory
+                .ok_or(BfsSettingsError::UpdateMemoryNotSet)?,
+            num_update_blocks,
+            capacity_check_frequency: self
+                .capacity_check_frequency
+                .ok_or(BfsSettingsError::CapacityCheckFrequencyNotSet)?,
+            initial_states: self
+                .initial_states
+                .ok_or(BfsSettingsError::InitialStatesNotSet)?,
+            state_size,
+            root_directories: self
+                .root_directories
+                .ok_or(BfsSettingsError::RootDirectoriesNotSet)?,
+            initial_memory_limit: self
+                .initial_memory_limit
+                .ok_or(BfsSettingsError::InitialMemoryLimitNotSet)?,
+            update_files_compression_threshold,
+            buf_io_capacity: self
+                .buf_io_capacity
+                .ok_or(BfsSettingsError::BufIoCapacityNotSet)?,
+            use_locked_io: self
+                .use_locked_io
+                .ok_or(BfsSettingsError::UseLockedIoNotSet)?,
+            sync_filesystem: self
+                .sync_filesystem
+                .ok_or(BfsSettingsError::SyncFilesystemNotSet)?,
+            compute_checksums: self
+                .compute_checksums
+                .ok_or(BfsSettingsError::ComputeChecksumsNotSet)?,
+            settings_provider: self
+                .settings_provider
+                .ok_or(BfsSettingsError::SettingsProviderNotSet)?,
         })
     }
 }
@@ -200,7 +316,7 @@ pub struct BfsSettings<P: BfsSettingsProvider> {
     pub(crate) threads: usize,
     pub(crate) chunk_size_bytes: usize,
     pub(crate) update_memory: usize,
-    pub(crate) update_vec_capacity: usize,
+    pub(crate) num_update_blocks: usize,
     pub(crate) capacity_check_frequency: usize,
     pub(crate) initial_states: Vec<u64>,
     pub(crate) state_size: u64,
@@ -227,8 +343,8 @@ impl<P: BfsSettingsProvider> BfsSettings<P> {
         self.chunk_size_bytes * 8
     }
 
-    pub fn num_update_blocks(&self) -> usize {
-        self.update_memory / (self.update_vec_capacity * std::mem::size_of::<u32>())
+    pub fn update_block_capacity(&self) -> usize {
+        self.update_memory / (self.num_update_blocks * std::mem::size_of::<u32>())
     }
 
     pub fn root_dir(&self, chunk_idx: usize) -> &Path {

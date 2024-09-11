@@ -24,13 +24,15 @@ pub struct UpdateManager<'a, P: BfsSettingsProvider + Sync> {
 
 impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
     pub fn new(settings: &'a BfsSettings<P>, locked_io: &'a LockedIO<P>) -> Self {
-        let num_blocks = settings.num_update_blocks();
+        let num_blocks = settings.num_update_blocks;
 
         tracing::debug!("creating {num_blocks} update blocks");
 
+        let capacity = settings.update_block_capacity();
+
         let available_blocks = Mutex::new(
             (0..num_blocks)
-                .map(|_| AvailableUpdateBlock::new(settings.update_vec_capacity))
+                .map(|_| AvailableUpdateBlock::new(capacity))
                 .collect::<Vec<_>>(),
         );
         let filled_blocks = Mutex::new(Vec::new());
