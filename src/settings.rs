@@ -39,6 +39,7 @@ pub struct BfsSettingsBuilder<P: BfsSettingsProvider> {
     buf_io_capacity: Option<usize>,
     use_locked_io: Option<bool>,
     sync_filesystem: Option<bool>,
+    compute_checksums: Option<bool>,
     settings_provider: Option<P>,
 }
 
@@ -64,6 +65,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             buf_io_capacity: None,
             use_locked_io: None,
             sync_filesystem: None,
+            compute_checksums: None,
             settings_provider: None,
         }
     }
@@ -139,6 +141,11 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
         self
     }
 
+    pub fn compute_checksums(mut self, compute_checksums: bool) -> Self {
+        self.compute_checksums = Some(compute_checksums);
+        self
+    }
+
     pub fn settings_provider(mut self, settings_provider: P) -> Self {
         self.settings_provider = Some(settings_provider);
         self
@@ -183,6 +190,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             buf_io_capacity: self.buf_io_capacity?,
             use_locked_io: self.use_locked_io?,
             sync_filesystem: self.sync_filesystem?,
+            compute_checksums: self.compute_checksums?,
             settings_provider: self.settings_provider?,
         })
     }
@@ -202,6 +210,7 @@ pub struct BfsSettings<P: BfsSettingsProvider> {
     pub(crate) buf_io_capacity: usize,
     pub(crate) use_locked_io: bool,
     pub(crate) sync_filesystem: bool,
+    pub(crate) compute_checksums: bool,
     pub(crate) settings_provider: P,
 }
 
