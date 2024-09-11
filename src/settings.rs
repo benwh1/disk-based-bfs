@@ -29,6 +29,7 @@ pub struct BfsSettingsBuilder<P: BfsSettingsProvider> {
     threads: usize,
     chunk_size_bytes: Option<usize>,
     update_memory: Option<usize>,
+    update_vec_capacity: Option<usize>,
     capacity_check_frequency: Option<usize>,
     initial_states: Option<Vec<u64>>,
     state_size: Option<u64>,
@@ -53,6 +54,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             threads: 1,
             chunk_size_bytes: None,
             update_memory: None,
+            update_vec_capacity: None,
             capacity_check_frequency: None,
             initial_states: None,
             state_size: None,
@@ -81,6 +83,11 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
 
     pub fn update_memory(mut self, update_memory: usize) -> Self {
         self.update_memory = Some(update_memory);
+        self
+    }
+
+    pub fn update_vec_capacity(mut self, update_vec_capacity: usize) -> Self {
+        self.update_vec_capacity = Some(update_vec_capacity);
         self
     }
 
@@ -153,10 +160,20 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             return None;
         }
 
+        // Each thread can hold one update vec per chunk, so we need more than (threads * chunks)
+        // update vecs in total
+        let num_update_vecs =
+            self.update_memory? / (self.update_vec_capacity? * std::mem::size_of::<u32>());
+        let num_chunks = state_size / (8 * chunk_size_bytes);
+        if num_update_vecs <= self.threads * num_chunks {
+            return None;
+        }
+
         Some(BfsSettings {
             threads: self.threads,
             chunk_size_bytes: self.chunk_size_bytes?,
             update_memory: self.update_memory?,
+            update_vec_capacity: self.update_vec_capacity?,
             capacity_check_frequency: self.capacity_check_frequency?,
             initial_states: self.initial_states?,
             state_size: self.state_size?,
@@ -175,6 +192,7 @@ pub struct BfsSettings<P: BfsSettingsProvider> {
     pub(crate) threads: usize,
     pub(crate) chunk_size_bytes: usize,
     pub(crate) update_memory: usize,
+    pub(crate) update_vec_capacity: usize,
     pub(crate) capacity_check_frequency: usize,
     pub(crate) initial_states: Vec<u64>,
     pub(crate) state_size: u64,
@@ -200,13 +218,8 @@ impl<P: BfsSettingsProvider> BfsSettings<P> {
         self.chunk_size_bytes * 8
     }
 
-    /// `self.update_memory` is the total amount of space we use for storing all updates across all
-    /// chunks and all threads, so this is the total size of each small `Vec` of updates.
-    pub fn update_capacity_per_vec(&self) -> usize {
-        // We have one vec per chunk per thread in `update_and_expand_chunk`, and another vec per
-        // chunk per thread in `UpdateManager`, and each entry is a `u32`.
-        self.update_memory
-            / (self.threads * self.num_array_chunks() * 2 * std::mem::size_of::<u32>())
+    pub fn num_update_blocks(&self) -> usize {
+        self.update_memory / (self.update_vec_capacity * std::mem::size_of::<u32>())
     }
 
     pub fn root_dir(&self, chunk_idx: usize) -> &Path {
