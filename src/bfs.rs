@@ -1,4 +1,5 @@
 use std::{
+    cell::OnceCell,
     fs::File,
     io::{BufWriter, Write},
     sync::Arc,
@@ -474,11 +475,8 @@ impl<
         chunk_idx: usize,
     ) -> u64 {
         let mut new_positions = 0;
-        let mut updates = self
-            .update_file_manager
-            .take_n(self.settings.num_array_chunks())
-            .into_iter()
-            .map(|b| b.into_fillable(depth + 1, chunk_idx))
+        let mut updates = (0..self.settings.num_array_chunks())
+            .map(|_| OnceCell::new())
             .collect::<Vec<_>>();
 
         let mut callback = self.callback.clone();
@@ -502,7 +500,11 @@ impl<
         callback.end_of_chunk(depth + 1, chunk_idx);
 
         // Send the remaining updates back to the update manager
-        for (idx, upd) in updates.into_iter().enumerate() {
+        for (idx, upd) in updates
+            .into_iter()
+            .enumerate()
+            .flat_map(|(i, u)| u.into_inner().map(|u| (i, u)))
+        {
             self.update_file_manager
                 .put(upd.into_filled(depth + 2, idx));
         }
@@ -516,11 +518,19 @@ impl<
         new_positions
     }
 
-    fn check_update_vec_capacity(&self, updates: &mut [FillableUpdateBlock], depth: usize) {
+    fn check_update_vec_capacity(
+        &self,
+        updates: &mut [OnceCell<FillableUpdateBlock>],
+        depth: usize,
+    ) {
         // Check if any of the update vecs may go over capacity
         let max_new_nodes = self.settings.capacity_check_frequency * EXPANSION_NODES;
 
-        for (idx, upd) in updates.iter_mut().enumerate() {
+        for (idx, upd) in updates
+            .iter_mut()
+            .enumerate()
+            .flat_map(|(i, u)| u.get_mut().map(|u| (i, u)))
+        {
             if upd.len() + max_new_nodes > upd.capacity() {
                 // Possible to reach capacity on the next block of expansions
                 self.update_file_manager
@@ -532,7 +542,7 @@ impl<
     fn update_and_expand_from_update_files(
         &self,
         chunk_buffer: &mut [u8],
-        updates: &mut [FillableUpdateBlock],
+        updates: &mut [OnceCell<FillableUpdateBlock>],
         callback: &mut Callback,
         depth: usize,
         chunk_idx: usize,
@@ -580,7 +590,13 @@ impl<
 
                     for node in expanded {
                         let (idx, offset) = self.node_to_chunk_coords(node);
-                        updates[idx].push(offset);
+                        updates[idx]
+                            .get_mut_or_init(|| {
+                                self.update_file_manager
+                                    .take()
+                                    .into_fillable(depth, chunk_idx)
+                            })
+                            .push(offset);
                     }
                 }
             }
@@ -592,7 +608,7 @@ impl<
     fn update_and_expand_from_update_arrays(
         &self,
         chunk_buffer: &mut [u8],
-        updates: &mut [FillableUpdateBlock],
+        updates: &mut [OnceCell<FillableUpdateBlock>],
         callback: &mut Callback,
         depth: usize,
         chunk_idx: usize,
@@ -639,7 +655,13 @@ impl<
 
                         for node in expanded {
                             let (idx, offset) = self.node_to_chunk_coords(node);
-                            updates[idx].push(offset);
+                            updates[idx]
+                                .get_mut_or_init(|| {
+                                    self.update_file_manager
+                                        .take()
+                                        .into_fillable(depth, chunk_idx)
+                                })
+                                .push(offset);
                         }
                     }
                 }

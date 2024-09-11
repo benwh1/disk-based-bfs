@@ -192,7 +192,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         self.write_and_put(to_write);
     }
 
-    fn take(&self) -> AvailableUpdateBlock {
+    pub fn take(&self) -> AvailableUpdateBlock {
         loop {
             if let Some(block) = self.available_blocks.lock().unwrap().pop() {
                 return block;
@@ -230,17 +230,6 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
         let mut lock = self.sizes.write().unwrap();
         *lock = hashmap;
-    }
-
-    pub fn take_n(&self, n: usize) -> Vec<AvailableUpdateBlock> {
-        let mut blocks = Vec::with_capacity(n);
-
-        for _ in 0..n {
-            let block = self.take();
-            blocks.push(block);
-        }
-
-        blocks
     }
 
     pub fn put(&self, block: FilledUpdateBlock) {
