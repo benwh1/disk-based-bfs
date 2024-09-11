@@ -29,7 +29,7 @@ pub enum InMemoryBfsResult {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum State {
     Iteration { depth: usize },
     CompressAllUpdateFiles { depth: usize },
@@ -127,8 +127,8 @@ impl<
         }
 
         // Check that the file size is correct
-        let expected_size = self.settings.chunk_size_bytes;
-        let actual_size = file_path.metadata().unwrap().len() as usize;
+        let expected_size = self.settings.chunk_size_bytes as u64;
+        let actual_size = file_path.metadata().unwrap().len();
         assert_eq!(expected_size, actual_size);
 
         true
@@ -292,7 +292,7 @@ impl<
             .map(|read_dir| {
                 read_dir.flatten().map(|entry| entry.path()).any(|path| {
                     let ext = path.extension().and_then(|ext| ext.to_str());
-                    ext == None || ext == Some("used")
+                    ext.is_none() || ext == Some("used")
                 })
             })
             .unwrap_or(false)
@@ -307,7 +307,7 @@ impl<
                     .map(|entry| entry.path())
                     .filter(|path| {
                         let ext = path.extension().and_then(|ext| ext.to_str());
-                        ext == None || ext == Some("used")
+                        ext.is_none() || ext == Some("used")
                     })
                     .count()
                     > 1
@@ -503,7 +503,7 @@ impl<
         for (idx, upd) in updates
             .into_iter()
             .enumerate()
-            .flat_map(|(i, u)| u.into_inner().map(|u| (i, u)))
+            .filter_map(|(i, u)| u.into_inner().map(|u| (i, u)))
         {
             self.update_file_manager
                 .put(upd.into_filled(depth + 2, idx));
@@ -529,7 +529,7 @@ impl<
         for (idx, upd) in updates
             .iter_mut()
             .enumerate()
-            .flat_map(|(i, u)| u.get_mut().map(|u| (i, u)))
+            .filter_map(|(i, u)| u.get_mut().map(|u| (i, u)))
         {
             if upd.len() + max_new_nodes > upd.capacity() {
                 // Possible to reach capacity on the next block of expansions
@@ -550,7 +550,7 @@ impl<
         let mut new_positions = 0u64;
 
         let mut expander = self.expander.clone();
-        let mut expanded = [0u64; EXPANSION_NODES];
+        let mut expanded_nodes = [0u64; EXPANSION_NODES];
 
         let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
         let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
@@ -581,14 +581,14 @@ impl<
                     let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
                     callback.new_state(depth + 1, encoded);
 
-                    if new_positions as usize % self.settings.capacity_check_frequency == 0 {
+                    if new_positions % self.settings.capacity_check_frequency as u64 == 0 {
                         self.check_update_vec_capacity(updates, depth + 2);
                     }
 
                     // Expand the node
-                    expander(encoded, &mut expanded);
+                    expander(encoded, &mut expanded_nodes);
 
-                    for node in expanded {
+                    for node in expanded_nodes {
                         let (idx, offset) = self.node_to_chunk_coords(node);
                         updates[idx]
                             .get_mut_or_init(|| {
@@ -616,7 +616,7 @@ impl<
         let mut new_positions = 0u64;
 
         let mut expander = self.expander.clone();
-        let mut expanded = [0u64; EXPANSION_NODES];
+        let mut expanded_nodes = [0u64; EXPANSION_NODES];
 
         let dir_path = self
             .settings
@@ -630,8 +630,8 @@ impl<
             .map(|entry| entry.path())
             .filter(|path| path.extension().and_then(|ext| ext.to_str()) != Some("tmp"))
         {
-            let file_len = file_path.metadata().unwrap().len() as usize;
-            assert_eq!(file_len, self.settings.chunk_size_bytes);
+            let file_len = file_path.metadata().unwrap().len();
+            assert_eq!(file_len, self.settings.chunk_size_bytes as u64);
 
             let update_array_bytes = self.locked_io.read_to_vec(&file_path);
 
@@ -645,15 +645,15 @@ impl<
                         let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
                         callback.new_state(depth + 1, encoded);
 
-                        if new_positions as usize % self.settings.capacity_check_frequency == 0 {
+                        if new_positions % self.settings.capacity_check_frequency as u64 == 0 {
                             self.check_update_vec_capacity(updates, depth + 2);
                         }
 
                         // Expand the node
                         let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
-                        expander(encoded, &mut expanded);
+                        expander(encoded, &mut expanded_nodes);
 
-                        for node in expanded {
+                        for node in expanded_nodes {
                             let (idx, offset) = self.node_to_chunk_coords(node);
                             updates[idx]
                                 .get_mut_or_init(|| {
@@ -678,7 +678,7 @@ impl<
         let mut current = HashSet::with_hasher(CityHasher::default());
         let mut next = HashSet::with_hasher(CityHasher::default());
 
-        let mut expanded = [0u64; EXPANSION_NODES];
+        let mut expanded_nodes = [0u64; EXPANSION_NODES];
         let mut depth = 0;
 
         let mut callback = self.callback.clone();
@@ -731,8 +731,8 @@ impl<
                                     .iter()
                                     .filter(|&&val| (thread_start..thread_end).contains(&val))
                                 {
-                                    expander(encoded, &mut expanded);
-                                    for node in expanded {
+                                    expander(encoded, &mut expanded_nodes);
+                                    for node in expanded_nodes {
                                         if !old.contains(&node) && !current.contains(&node) {
                                             next.insert(node);
                                         }
@@ -788,7 +788,7 @@ impl<
         }
     }
 
-    /// Converts an encoded node value to (chunk_idx, byte_idx, bit_idx)
+    /// Converts an encoded node value to (`chunk_idx`, `byte_idx`, `bit_idx`)
     fn node_to_bit_coords(&self, node: u64) -> (usize, usize, usize) {
         let node = node as usize;
         let chunk_idx = (node / 8) / self.settings.chunk_size_bytes;
@@ -801,7 +801,7 @@ impl<
         (chunk_idx * self.settings.chunk_size_bytes * 8 + byte_idx * 8 + bit_idx) as u64
     }
 
-    /// Converts an encoded node value to (chunk_idx, chunk_offset)
+    /// Converts an encoded node value to (`chunk_idx`, `chunk_offset`)
     fn node_to_chunk_coords(&self, node: u64) -> (usize, u32) {
         let node = node as usize;
         let n = self.settings.states_per_chunk();

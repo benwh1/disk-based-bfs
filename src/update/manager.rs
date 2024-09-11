@@ -109,7 +109,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         tracing::info!("finished writing update blocks");
     }
 
-    /// Assumes that all the blocks have the same depth and chunk_idx
+    /// Assumes that all the blocks have the same `depth` and `chunk_idx`
     fn write_updates(&self, filled_blocks: &[FilledUpdateBlock]) {
         if filled_blocks.is_empty() {
             return;
@@ -346,7 +346,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         let file_name = Alphanumeric.sample_string(&mut rng, 16);
         let file_path = dir_path.join(file_name);
 
-        let bytes_written = self.locked_io.write_file(&file_path, &update_buffer);
+        let bytes_written = self.locked_io.write_file(&file_path, update_buffer);
 
         let mut sizes_lock = self.sizes.write().unwrap();
         let sizes_for_depth = sizes_lock
