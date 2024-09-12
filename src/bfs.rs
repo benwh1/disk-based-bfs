@@ -589,7 +589,7 @@ impl<
                             .get_mut_or_init(|| {
                                 self.update_file_manager
                                     .take()
-                                    .into_fillable(depth, chunk_idx)
+                                    .into_fillable(depth + 1, chunk_idx)
                             })
                             .push(offset);
                     }
@@ -651,7 +651,7 @@ impl<
                                 .get_mut_or_init(|| {
                                     self.update_file_manager
                                         .take()
-                                        .into_fillable(depth, chunk_idx)
+                                        .into_fillable(depth + 1, chunk_idx)
                                 })
                                 .push(offset);
                         }
