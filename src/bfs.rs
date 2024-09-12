@@ -827,9 +827,7 @@ impl<
                 let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
                 std::fs::create_dir_all(&dir_path).unwrap();
 
-                let mut file_path = dir_path.join(&file_names[chunk_idx]);
-                file_path.set_extension("dat");
-
+                let file_path = dir_path.join(&file_names[chunk_idx]);
                 let file = File::create(&file_path).unwrap();
                 BufWriter::with_capacity(1 << 20, file)
             })
