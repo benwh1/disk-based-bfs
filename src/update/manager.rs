@@ -401,12 +401,6 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         depth: usize,
         chunk_idx: usize,
     ) {
-        tracing::trace!(
-            "marking update block as filled, contains {}/{} values",
-            upd.len(),
-            upd.capacity(),
-        );
-
         let new = self
             .take()
             .into_fillable(upd.source_depth(), upd.source_chunk_idx());
