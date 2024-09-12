@@ -253,7 +253,8 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         // Find all paths to delete and then batch-delete them
         let mut path_bufs_to_delete = Vec::new();
         for path in read_dir.flatten().map(|entry| entry.path()) {
-            if !delete_used_only || path.extension().and_then(|ext| ext.to_str()) == Some("used") {
+            let ext = path.extension().and_then(|ext| ext.to_str());
+            if (!delete_used_only && ext.is_none()) || ext == Some("used") {
                 path_bufs_to_delete.push(path);
             }
         }
@@ -299,7 +300,8 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         // Find all paths to delete and then batch-delete them
         let mut path_bufs_to_delete = Vec::new();
         for path in read_dir.flatten().map(|entry| entry.path()) {
-            if !delete_used_only || path.extension().and_then(|ext| ext.to_str()) == Some("used") {
+            let ext = path.extension().and_then(|ext| ext.to_str());
+            if (!delete_used_only && ext.is_none()) || ext == Some("used") {
                 path_bufs_to_delete.push(path);
             }
         }
