@@ -559,11 +559,10 @@ impl<
             return 0;
         };
 
-        for file_path in read_dir
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().and_then(|ext| ext.to_str()) != Some("tmp"))
-        {
+        for file_path in read_dir.flatten().map(|entry| entry.path()).filter(|path| {
+            let ext = path.extension().and_then(|ext| ext.to_str());
+            ext.is_none() || ext == Some("used")
+        }) {
             let bytes = self.locked_io.read_to_vec(&file_path);
             assert_eq!(bytes.len() % 4, 0);
 
@@ -626,11 +625,10 @@ impl<
             return 0;
         };
 
-        for file_path in read_dir
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().and_then(|ext| ext.to_str()) != Some("tmp"))
-        {
+        for file_path in read_dir.flatten().map(|entry| entry.path()).filter(|path| {
+            let ext = path.extension().and_then(|ext| ext.to_str());
+            ext.is_none() || ext == Some("used")
+        }) {
             let file_len = file_path.metadata().unwrap().len();
             assert_eq!(file_len, self.settings.chunk_size_bytes as u64);
 
