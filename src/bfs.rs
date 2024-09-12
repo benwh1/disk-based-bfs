@@ -10,6 +10,7 @@ use cityhasher::{CityHasher, HashSet};
 use parking_lot::{Condvar, Mutex, RwLock};
 use rand::distributions::{Alphanumeric, DistString};
 use serde_derive::{Deserialize, Serialize};
+use xxhash_rust::xxh3::Xxh3Default;
 
 use crate::{
     callback::BfsCallback,
@@ -815,15 +816,20 @@ impl<
     }
 
     fn create_initial_update_files(&self, next: &HashSet<u64>, depth: usize) {
-        // Write values from `next` to initial update files
-        let mut update_files = (0..self.settings.num_array_chunks())
+        let mut rng = rand::thread_rng();
+        let num_chunks = self.settings.num_array_chunks();
+
+        let file_names = (0..num_chunks)
+            .map(|_| Alphanumeric.sample_string(&mut rng, 16))
+            .collect::<Vec<_>>();
+
+        // Create the initial update files
+        let mut update_files = (0..num_chunks)
             .map(|chunk_idx| {
                 let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
                 std::fs::create_dir_all(&dir_path).unwrap();
 
-                let mut rng = rand::thread_rng();
-                let file_name = Alphanumeric.sample_string(&mut rng, 16);
-                let mut file_path = dir_path.join(file_name);
+                let mut file_path = dir_path.join(&file_names[chunk_idx]);
                 file_path.set_extension("dat");
 
                 let file = File::create(&file_path).unwrap();
@@ -831,12 +837,32 @@ impl<
             })
             .collect::<Vec<_>>();
 
+        let mut hashers = vec![Xxh3Default::default(); self.settings.num_array_chunks()];
+
+        // Write values from `next` to initial update files
         for &val in next {
             let (chunk_idx, chunk_offset) = self.node_to_chunk_coords(val);
-            let bytes_written = update_files[chunk_idx]
-                .write(&chunk_offset.to_le_bytes())
-                .unwrap();
+            let bytes = chunk_offset.to_le_bytes();
+
+            let bytes_written = update_files[chunk_idx].write(&bytes).unwrap();
             assert_eq!(bytes_written, 4);
+
+            hashers[chunk_idx].update(&bytes);
+        }
+
+        if self.settings.compute_checksums {
+            // Write hashes
+            for (chunk_idx, hasher) in hashers.into_iter().enumerate() {
+                let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
+                std::fs::create_dir_all(&dir_path).unwrap();
+
+                let mut hash_file_path = dir_path.join(&file_names[chunk_idx]);
+                hash_file_path.set_extension("xxh3");
+
+                let hash = hasher.digest();
+                let mut file = File::create(&hash_file_path).unwrap();
+                file.write_all(&hash.to_le_bytes()).unwrap();
+            }
         }
     }
 
