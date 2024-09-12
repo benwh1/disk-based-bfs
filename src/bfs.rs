@@ -827,7 +827,7 @@ impl<
                 file_path.set_extension("dat");
 
                 let file = File::create(&file_path).unwrap();
-                BufWriter::with_capacity(self.settings.buf_io_capacity, file)
+                BufWriter::with_capacity(1 << 20, file)
             })
             .collect::<Vec<_>>();
 
