@@ -82,60 +82,16 @@ fn hash(bufs: &[&[u8]]) -> u64 {
     hasher.digest()
 }
 
-fn verify_hash(path: &Path, buf: &[u8]) -> Result<(), Error> {
-    let hash_path = path.with_extension("xxh3");
-    let hash_file_len = hash_path
-        .metadata()
-        .map_err(|err| Error::ReadMetadataError {
-            path: hash_path.to_owned(),
-            err,
-        })?
-        .len();
-
-    if hash_file_len != 8 {
-        return Err(Error::IncorrectFileLength {
-            path: hash_path.to_owned(),
-            expected: 8,
-            actual: hash_file_len,
-        });
-    }
-
-    let mut hash_buf = [0u8; 8];
-    let mut file = File::open(&hash_path).map_err(|err| Error::OpenFileError {
-        path: hash_path.to_owned(),
-        err,
-    })?;
-    file.read_exact(&mut hash_buf)
-        .map_err(|err| Error::ReadFileError {
-            path: hash_path.to_owned(),
-            err,
-        })?;
-
-    drop(file);
-
-    let read_hash = u64::from_le_bytes(hash_buf);
-    let computed_hash = hash(&[buf]);
-
-    if read_hash != computed_hash {
-        return Err(Error::ChecksumMismatch {
-            path: path.to_owned(),
-            expected: read_hash,
-            actual: computed_hash,
-        });
-    }
-
-    Ok(())
-}
-
 fn write_unlocked<'a>(path: &Path, data: &'a [&[u8]], with_hash: bool) -> Result<u64, Error> {
     let data_size: u64 = data.iter().map(|buf| buf.len() as u64).sum();
 
     let hash = if with_hash { Some(hash(data)) } else { None };
+    let bytes_to_write = if with_hash { data_size + 8 } else { data_size };
 
     if let Some(hash) = hash {
-        tracing::trace!("writing {data_size} bytes to {path:?}, hash = {hash:x}");
+        tracing::trace!("writing {bytes_to_write} bytes to {path:?}, hash = {hash:x}");
     } else {
-        tracing::trace!("writing {data_size} bytes to {path:?}");
+        tracing::trace!("writing {bytes_to_write} bytes to {path:?}");
     }
 
     let path_tmp = path.with_extension("tmp");
@@ -150,6 +106,15 @@ fn write_unlocked<'a>(path: &Path, data: &'a [&[u8]], with_hash: bool) -> Result
             err,
         })?;
     }
+
+    if let Some(hash) = hash {
+        file.write_all(&hash.to_le_bytes())
+            .map_err(|err| Error::WriteFileError {
+                path: path_tmp.to_owned(),
+                err,
+            })?;
+    }
+
     drop(file);
 
     // Check that the number of bytes written is exactly the size of the file
@@ -161,35 +126,12 @@ fn write_unlocked<'a>(path: &Path, data: &'a [&[u8]], with_hash: bool) -> Result
         })?
         .len();
 
-    if file_size != data_size {
+    if file_size != bytes_to_write {
         return Err(Error::IncorrectFileLength {
             path: path_tmp.to_owned(),
-            expected: data_size,
+            expected: bytes_to_write,
             actual: file_size,
         });
-    }
-
-    if let Some(hash) = hash {
-        let hash_path_tmp = path.with_extension("xxh3.tmp");
-        let hash_path = path.with_extension("xxh3");
-
-        // Write hash to file
-        let mut file = File::create(&hash_path_tmp).map_err(|err| Error::CreateFileError {
-            path: hash_path_tmp.to_owned(),
-            err,
-        })?;
-        file.write_all(&hash.to_le_bytes())
-            .map_err(|err| Error::WriteFileError {
-                path: hash_path_tmp.to_owned(),
-                err,
-            })?;
-        drop(file);
-
-        std::fs::rename(&hash_path_tmp, &hash_path).map_err(|err| Error::RenameFileError {
-            old_path: hash_path_tmp.to_owned(),
-            new_path: hash_path.to_owned(),
-            err,
-        })?;
     }
 
     std::fs::rename(&path_tmp, &path).map_err(|err| Error::RenameFileError {
@@ -202,11 +144,12 @@ fn write_unlocked<'a>(path: &Path, data: &'a [&[u8]], with_hash: bool) -> Result
 }
 
 fn read_unlocked(path: &Path, buf: &mut [u8], with_hash: bool) -> Result<(), Error> {
-    let buf_len = buf.len();
+    let buf_len = buf.len() as u64;
+    let bytes_to_read = if with_hash { buf_len + 8 } else { buf_len };
 
-    tracing::trace!("reading {buf_len} bytes from file {path:?}");
+    tracing::trace!("reading {bytes_to_read} bytes from file {path:?}");
 
-    let file_len = path
+    let file_size = path
         .metadata()
         .map_err(|err| Error::ReadMetadataError {
             path: path.to_owned(),
@@ -214,11 +157,11 @@ fn read_unlocked(path: &Path, buf: &mut [u8], with_hash: bool) -> Result<(), Err
         })?
         .len();
 
-    if buf_len as u64 != file_len {
+    if file_size != bytes_to_read {
         return Err(Error::IncorrectFileLength {
             path: path.to_owned(),
-            expected: buf_len as u64,
-            actual: file_len,
+            expected: bytes_to_read,
+            actual: file_size,
         });
     }
 
@@ -232,7 +175,23 @@ fn read_unlocked(path: &Path, buf: &mut [u8], with_hash: bool) -> Result<(), Err
     })?;
 
     if with_hash {
-        verify_hash(path, buf)?;
+        let mut hash_buf = [0u8; 8];
+        file.read_exact(&mut hash_buf)
+            .map_err(|err| Error::ReadFileError {
+                path: path.to_owned(),
+                err,
+            })?;
+
+        let read_hash = u64::from_le_bytes(hash_buf);
+        let computed_hash = hash(&[&buf]);
+
+        if read_hash != computed_hash {
+            return Err(Error::ChecksumMismatch {
+                path: path.to_owned(),
+                expected: read_hash,
+                actual: computed_hash,
+            });
+        }
     }
 
     Ok(())
@@ -264,10 +223,24 @@ fn read_unlocked_to_vec(path: &Path, with_hash: bool) -> Result<Vec<u8>, Error> 
     }
 
     if with_hash {
-        verify_hash(path, &buf)?;
-    }
+        let mut buf = buf;
+        let hash_buf: [u8; 8] = buf.split_off(buf_len - 8).try_into().unwrap();
 
-    Ok(buf)
+        let read_hash = u64::from_le_bytes(hash_buf);
+        let computed_hash = hash(&[&buf]);
+
+        if read_hash != computed_hash {
+            return Err(Error::ChecksumMismatch {
+                path: path.to_owned(),
+                expected: read_hash,
+                actual: computed_hash,
+            });
+        }
+
+        Ok(buf)
+    } else {
+        Ok(buf)
+    }
 }
 
 fn read_unlocked_to_string(path: &Path, with_hash: bool) -> Result<String, Error> {
@@ -279,7 +252,7 @@ fn read_unlocked_to_string(path: &Path, with_hash: bool) -> Result<String, Error
     })
 }
 
-fn delete_unlocked(paths: &[&Path], with_hash: bool) -> Result<u64, Error> {
+fn delete_unlocked(paths: &[&Path]) -> Result<u64, Error> {
     let mut bytes_deleted = 0;
 
     for &path in paths {
@@ -299,14 +272,6 @@ fn delete_unlocked(paths: &[&Path], with_hash: bool) -> Result<u64, Error> {
         })?;
 
         bytes_deleted += file_len;
-
-        if with_hash {
-            let hash_path = path.with_extension("xxh3");
-            std::fs::remove_file(&hash_path).map_err(|err| Error::DeleteFileError {
-                path: hash_path.to_owned(),
-                err,
-            })?;
-        }
     }
 
     Ok(bytes_deleted)
@@ -408,7 +373,7 @@ impl<'a, P: BfsSettingsProvider> LockedDisk<'a, P> {
 
         let _lock = self.lock();
 
-        delete_unlocked(paths, self.settings.compute_checksums)
+        delete_unlocked(paths)
     }
 }
 

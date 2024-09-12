@@ -127,11 +127,6 @@ impl<
             return false;
         }
 
-        // Check that the file size is correct
-        let expected_size = self.settings.chunk_size_bytes as u64;
-        let actual_size = file_path.metadata().unwrap().len();
-        assert_eq!(expected_size, actual_size);
-
         true
     }
 
@@ -629,10 +624,8 @@ impl<
             let ext = path.extension().and_then(|ext| ext.to_str());
             ext.is_none() || ext == Some("used")
         }) {
-            let file_len = file_path.metadata().unwrap().len();
-            assert_eq!(file_len, self.settings.chunk_size_bytes as u64);
-
             let update_array_bytes = self.locked_io.read_to_vec(&file_path);
+            assert_eq!(update_array_bytes.len(), self.settings.chunk_size_bytes);
 
             for (byte_idx, &update_byte) in update_array_bytes.iter().enumerate() {
                 for bit_idx in 0..8 {
@@ -849,15 +842,9 @@ impl<
         if self.settings.compute_checksums {
             // Write hashes
             for (chunk_idx, hasher) in hashers.into_iter().enumerate() {
-                let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
-                std::fs::create_dir_all(&dir_path).unwrap();
-
-                let mut hash_file_path = dir_path.join(&file_names[chunk_idx]);
-                hash_file_path.set_extension("xxh3");
-
                 let hash = hasher.digest();
-                let mut file = File::create(&hash_file_path).unwrap();
-                file.write_all(&hash.to_le_bytes()).unwrap();
+                let bytes_written = update_files[chunk_idx].write(&hash.to_le_bytes()).unwrap();
+                assert_eq!(bytes_written, 8);
             }
         }
     }
