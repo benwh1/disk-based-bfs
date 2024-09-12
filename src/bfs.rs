@@ -90,9 +90,6 @@ impl<
     }
 
     fn write_new_positions_data_file(&self, new: u64, depth: usize, chunk_idx: usize) {
-        let dir_path = self.settings.new_positions_data_dir_path(depth);
-        std::fs::create_dir_all(&dir_path).unwrap();
-
         let file_path = self.settings.new_positions_data_file_path(depth, chunk_idx);
         self.locked_io.write_file(&file_path, &new.to_le_bytes());
     }
@@ -119,15 +116,13 @@ impl<
     fn try_read_chunk(&self, chunk_buffer: &mut [u8], depth: usize, chunk_idx: usize) -> bool {
         let file_path = self.settings.chunk_file_path(depth, chunk_idx);
 
-        if self
-            .locked_io
-            .try_read_file(&file_path, chunk_buffer)
-            .is_err()
-        {
-            return false;
-        }
+        let result = self.locked_io.try_read_file(&file_path, chunk_buffer);
 
-        true
+        match result {
+            Ok(()) => true,
+            Err(err) if err.is_read_nonexistent_file_error() => false,
+            Err(err) => panic!("failed to read file {file_path:?}: {err}"),
+        }
     }
 
     fn create_chunk(&self, chunk_buffer: &mut [u8], hashsets: &[&HashSet<u64>], chunk_idx: usize) {
@@ -145,9 +140,6 @@ impl<
     }
 
     fn write_chunk(&self, chunk_buffer: &[u8], depth: usize, chunk_idx: usize) {
-        let dir_path = self.settings.chunk_dir_path(depth, chunk_idx);
-        std::fs::create_dir_all(&dir_path).unwrap();
-
         let file_path = self.settings.chunk_file_path(depth, chunk_idx);
         self.locked_io.write_file(&file_path, chunk_buffer);
     }
@@ -195,9 +187,9 @@ impl<
         chunk_idx: usize,
     ) {
         let dir_path = self.settings.update_array_chunk_dir_path(depth, chunk_idx);
-        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
-            return;
-        };
+        let read_dir = std::fs::read_dir(&dir_path)
+            .inspect_err(|_| panic!("failed to read directory {dir_path:?}"))
+            .unwrap();
 
         // Mark "used" files as unused, in case we restart the program while this loop is running
         // and need to re-read all the update arrays
@@ -210,9 +202,9 @@ impl<
             std::fs::rename(file_path, file_path_unused).unwrap();
         }
 
-        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
-            return;
-        };
+        let read_dir = std::fs::read_dir(&dir_path)
+            .inspect_err(|_| panic!("failed to read directory {dir_path:?}"))
+            .unwrap();
 
         // Update from update arrays
         for file_path in read_dir
@@ -240,9 +232,9 @@ impl<
         chunk_idx: usize,
     ) {
         let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
-        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
-            return;
-        };
+        let read_dir = std::fs::read_dir(&dir_path)
+            .inspect_err(|_| panic!("failed to read directory {dir_path:?}"))
+            .unwrap();
 
         // Mark "used" files as unused, in case we restart the program while this loop is running
         // and need to re-read all the update files
@@ -255,9 +247,9 @@ impl<
             std::fs::rename(file_path, file_path_unused).unwrap();
         }
 
-        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
-            return;
-        };
+        let read_dir = std::fs::read_dir(&dir_path)
+            .inspect_err(|_| panic!("failed to read directory {dir_path:?}"))
+            .unwrap();
 
         // Update from update files
         for file_path in read_dir
@@ -284,31 +276,32 @@ impl<
     }
 
     fn has_update_files_to_compress(&self, depth: usize, chunk_idx: usize) -> bool {
-        if std::fs::read_dir(self.settings.update_chunk_dir_path(depth, chunk_idx))
-            .map(|read_dir| {
-                read_dir.flatten().map(|entry| entry.path()).any(|path| {
-                    let ext = path.extension().and_then(|ext| ext.to_str());
-                    ext.is_none() || ext == Some("used")
-                })
-            })
-            .unwrap_or(false)
-        {
+        let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
+        let read_dir = std::fs::read_dir(&dir_path)
+            .inspect_err(|_| panic!("failed to read directory {dir_path:?}"))
+            .unwrap();
+
+        if read_dir.flatten().map(|entry| entry.path()).any(|path| {
+            let ext = path.extension().and_then(|ext| ext.to_str());
+            ext.is_none() || ext == Some("used")
+        }) {
             return true;
         }
 
-        std::fs::read_dir(self.settings.update_array_chunk_dir_path(depth, chunk_idx))
-            .map(|read_dir| {
-                read_dir
-                    .flatten()
-                    .map(|entry| entry.path())
-                    .filter(|path| {
-                        let ext = path.extension().and_then(|ext| ext.to_str());
-                        ext.is_none() || ext == Some("used")
-                    })
-                    .count()
-                    > 1
+        let dir_path = self.settings.update_array_chunk_dir_path(depth, chunk_idx);
+        let read_dir = std::fs::read_dir(&dir_path)
+            .inspect_err(|_| panic!("failed to read directory {dir_path:?}"))
+            .unwrap();
+
+        read_dir
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                let ext = path.extension().and_then(|ext| ext.to_str());
+                ext.is_none() || ext == Some("used")
             })
-            .unwrap_or(false)
+            .count()
+            > 1
     }
 
     fn compress_update_files(&self, update_buffer: &mut [u8], depth: usize, chunk_idx: usize) {
@@ -549,10 +542,9 @@ impl<
         let mut expanded_nodes = [0u64; EXPANSION_NODES];
 
         let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
-        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
-            // No update files, so nothing to do
-            return 0;
-        };
+        let read_dir = std::fs::read_dir(&dir_path)
+            .inspect_err(|_| panic!("failed to read directory {dir_path:?}"))
+            .unwrap();
 
         for file_path in read_dir.flatten().map(|entry| entry.path()).filter(|path| {
             let ext = path.extension().and_then(|ext| ext.to_str());
@@ -616,9 +608,9 @@ impl<
         let dir_path = self
             .settings
             .update_array_chunk_dir_path(depth + 1, chunk_idx);
-        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
-            return 0;
-        };
+        let read_dir = std::fs::read_dir(&dir_path)
+            .inspect_err(|_| panic!("failed to read directory {dir_path:?}"))
+            .unwrap();
 
         for file_path in read_dir.flatten().map(|entry| entry.path()).filter(|path| {
             let ext = path.extension().and_then(|ext| ext.to_str());
@@ -814,12 +806,12 @@ impl<
             .map(|_| Alphanumeric.sample_string(&mut rng, 16))
             .collect::<Vec<_>>();
 
+        self.start_of_depth_init(depth - 1);
+
         // Create the initial update files
         let mut update_files = (0..num_chunks)
             .map(|chunk_idx| {
                 let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
-                std::fs::create_dir_all(&dir_path).unwrap();
-
                 let file_path = dir_path.join(&file_names[chunk_idx]);
                 let file = File::create(&file_path).unwrap();
                 BufWriter::with_capacity(1 << 20, file)
@@ -955,6 +947,30 @@ impl<
         new
     }
 
+    fn start_of_depth_init(&self, depth: usize) {
+        for root_idx in 0..self.settings.root_directories.len() {
+            let dir_path = self.settings.chunk_dir_path(depth + 1, root_idx);
+            tracing::trace!("creating directory {dir_path:?}");
+            std::fs::create_dir_all(&dir_path).unwrap();
+        }
+
+        for chunk_idx in 0..self.settings.num_array_chunks() {
+            let dir_path = self.settings.update_chunk_dir_path(depth + 2, chunk_idx);
+            tracing::trace!("creating directory {dir_path:?}");
+            std::fs::create_dir_all(&dir_path).unwrap();
+
+            let dir_path = self
+                .settings
+                .update_array_chunk_dir_path(depth + 2, chunk_idx);
+            tracing::trace!("creating directory {dir_path:?}");
+            std::fs::create_dir_all(&dir_path).unwrap();
+        }
+
+        let dir_path = self.settings.new_positions_data_dir_path(depth + 2);
+        tracing::trace!("creating directory {dir_path:?}");
+        std::fs::create_dir_all(&dir_path).unwrap();
+    }
+
     fn end_of_depth_cleanup(&self, depth: usize) {
         // We now have the array at depth `depth + 1`, and update files/arrays for depth
         // `depth + 2`, so we can delete the directories (which should be empty) for the
@@ -1012,13 +1028,15 @@ impl<
             self.settings.num_array_chunks()
         ]));
 
+        self.write_state(State::Iteration { depth });
+
+        self.start_of_depth_init(depth);
+
         // If this is the first time that `do_iteration` was called, then we will need to fill the
         // chunk buffers. After the first, they should already be full, so this should do nothing.
         self.chunk_buffers.fill(self.settings.chunk_size_bytes);
 
         let new_states = Arc::new(Mutex::new(0u64));
-
-        self.write_state(State::Iteration { depth });
 
         let pair = Arc::new((Mutex::new(false), Condvar::new()));
 

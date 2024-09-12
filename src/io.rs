@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{Error as IoError, Read, Write},
+    io::{Error as IoError, ErrorKind, Read, Write},
     path::{Path, PathBuf},
     string::FromUtf8Error,
     sync::{Mutex, MutexGuard},
@@ -72,6 +72,20 @@ pub enum Error {
 
     #[error("FilesNotOnSameDisk: files {paths:?} not on same disk")]
     FilesNotOnSameDisk { paths: Vec<PathBuf> },
+}
+
+impl Error {
+    /// Helper to check whether an error is due to a non-existent file being read
+    pub fn is_read_nonexistent_file_error(&self) -> bool {
+        match self {
+            Self::ReadFileError { err, .. } | Self::ReadMetadataError { err, .. }
+                if err.kind() == ErrorKind::NotFound =>
+            {
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 fn hash(bufs: &[&[u8]]) -> u64 {

@@ -147,8 +147,6 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
             // them, though
             if filled_blocks.iter().any(|block| !block.is_empty()) {
                 let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
-                std::fs::create_dir_all(&dir_path).unwrap();
-
                 let mut rng = rand::thread_rng();
                 let file_name = Alphanumeric.sample_string(&mut rng, 16);
                 let file_path = dir_path.join(file_name);
@@ -246,9 +244,9 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         }
 
         let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
-        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
-            return;
-        };
+        let read_dir = std::fs::read_dir(&dir_path)
+            .inspect_err(|_| panic!("failed to read directory {dir_path:?}"))
+            .unwrap();
 
         // Find all paths to delete and then batch-delete them
         let mut path_bufs_to_delete = Vec::new();
@@ -293,9 +291,9 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         }
 
         let dir_path = self.settings.update_array_chunk_dir_path(depth, chunk_idx);
-        let Ok(read_dir) = std::fs::read_dir(&dir_path) else {
-            return;
-        };
+        let read_dir = std::fs::read_dir(&dir_path)
+            .inspect_err(|_| panic!("failed to read directory {dir_path:?}"))
+            .unwrap();
 
         // Find all paths to delete and then batch-delete them
         let mut path_bufs_to_delete = Vec::new();
@@ -344,8 +342,6 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
     pub fn write_update_array(&self, update_buffer: &[u8], depth: usize, chunk_idx: usize) {
         let dir_path = self.settings.update_array_chunk_dir_path(depth, chunk_idx);
-        std::fs::create_dir_all(&dir_path).unwrap();
-
         let mut rng = rand::thread_rng();
         let file_name = Alphanumeric.sample_string(&mut rng, 16);
         let file_path = dir_path.join(file_name);
