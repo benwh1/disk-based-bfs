@@ -1,16 +1,9 @@
-use std::{
-    cell::OnceCell,
-    fs::File,
-    io::{BufWriter, Write},
-    sync::Arc,
-    thread::Builder as ThreadBuilder,
-};
+use std::{cell::OnceCell, sync::Arc, thread::Builder as ThreadBuilder};
 
 use cityhasher::{CityHasher, HashSet};
 use parking_lot::{Condvar, Mutex, RwLock};
 use rand::distributions::{Alphanumeric, DistString};
 use serde_derive::{Deserialize, Serialize};
-use xxhash_rust::xxh3::Xxh3Default;
 
 use crate::{
     callback::BfsCallback,
@@ -808,36 +801,23 @@ impl<
 
         self.start_of_depth_init(depth - 1);
 
-        // Create the initial update files
-        let mut update_files = (0..num_chunks)
-            .map(|chunk_idx| {
-                let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
-                let file_path = dir_path.join(&file_names[chunk_idx]);
-                let file = File::create(&file_path).unwrap();
-                BufWriter::with_capacity(1 << 20, file)
-            })
-            .collect::<Vec<_>>();
+        for chunk_idx in 0..num_chunks {
+            let updates = next
+                .iter()
+                .filter_map(|&val| {
+                    let (idx, offset) = self.node_to_chunk_coords(val);
+                    if idx == chunk_idx {
+                        Some(offset)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            let update_bytes = bytemuck::cast_slice(&updates);
 
-        let mut hashers = vec![Xxh3Default::default(); self.settings.num_array_chunks()];
-
-        // Write values from `next` to initial update files
-        for &val in next {
-            let (chunk_idx, chunk_offset) = self.node_to_chunk_coords(val);
-            let bytes = chunk_offset.to_le_bytes();
-
-            let bytes_written = update_files[chunk_idx].write(&bytes).unwrap();
-            assert_eq!(bytes_written, 4);
-
-            hashers[chunk_idx].update(&bytes);
-        }
-
-        if self.settings.compute_checksums {
-            // Write hashes
-            for (chunk_idx, hasher) in hashers.into_iter().enumerate() {
-                let hash = hasher.digest();
-                let bytes_written = update_files[chunk_idx].write(&hash.to_le_bytes()).unwrap();
-                assert_eq!(bytes_written, 8);
-            }
+            let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
+            let file_path = dir_path.join(&file_names[chunk_idx]);
+            self.locked_io.write_file(&file_path, &update_bytes);
         }
     }
 
