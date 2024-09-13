@@ -156,7 +156,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
                 let bytes_written = self
                     .locked_io
-                    .write_file_multiple_buffers(&file_path, &buffers);
+                    .write_file_multiple_buffers(&file_path, &buffers, false);
 
                 let mut sizes_lock = self.sizes.write().unwrap();
                 let sizes_for_depth = sizes_lock
@@ -218,7 +218,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         drop(read_lock);
 
         let path = self.settings.update_files_size_file_path();
-        self.locked_io.write_file(&path, str.as_ref());
+        self.locked_io.write_file(&path, str.as_ref(), false);
     }
 
     pub fn try_read_sizes_from_disk(&self) {
@@ -228,7 +228,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
             return;
         }
 
-        let str = self.locked_io.try_read_to_string(&path).unwrap();
+        let str = self.locked_io.try_read_to_string(&path, false).unwrap();
         let hashmap = serde_json::from_str(&str).unwrap();
 
         let mut lock = self.sizes.write().unwrap();
@@ -349,7 +349,9 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         let file_name = Alphanumeric.sample_string(&mut rng, 16);
         let file_path = dir_path.join(file_name);
 
-        let bytes_written = self.locked_io.write_file(&file_path, update_buffer);
+        let bytes_written =
+            self.locked_io
+                .write_file(&file_path, update_buffer, self.settings.compress_bit_arrays);
 
         let mut sizes_lock = self.sizes.write().unwrap();
         let sizes_for_depth = sizes_lock

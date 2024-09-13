@@ -1,4 +1,5 @@
 #![feature(array_chunks)]
+#![feature(buf_read_has_data_left)]
 #![feature(once_cell_get_mut)]
 #![deny(clippy::use_self)]
 #![deny(clippy::if_not_else)]

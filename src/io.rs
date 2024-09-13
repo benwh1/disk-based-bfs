@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{Error as IoError, ErrorKind, Read, Write},
+    io::{BufRead as _, Cursor, Error as IoError, ErrorKind, Read, Write},
     path::{Path, PathBuf},
     string::FromUtf8Error,
     sync::{Mutex, MutexGuard},
@@ -8,6 +8,7 @@ use std::{
 
 use thiserror::Error;
 use xxhash_rust::xxh3::Xxh3Default;
+use zstd::{Decoder, Encoder};
 
 use crate::settings::{BfsSettings, BfsSettingsProvider};
 
@@ -72,6 +73,15 @@ pub enum Error {
 
     #[error("FilesNotOnSameDisk: files {paths:?} not on same disk")]
     FilesNotOnSameDisk { paths: Vec<PathBuf> },
+
+    #[error("CompressionError: failed to write compressed data to file {path:?}: {err}")]
+    CompressionError { path: PathBuf, err: IoError },
+
+    #[error("DecompressionError: failed to read compressed data from file {path:?}: {err}")]
+    DecompressionError { path: PathBuf, err: IoError },
+
+    #[error("IncompleteDecompression: file {path:?} still has data left after decompression")]
+    IncompleteDecompression { path: PathBuf },
 }
 
 impl Error {
@@ -96,29 +106,48 @@ fn hash(bufs: &[&[u8]]) -> u64 {
     hasher.digest()
 }
 
-fn write_unlocked<'a>(path: &Path, data: &'a [&[u8]], with_hash: bool) -> Result<u64, Error> {
+fn write(
+    disk_mutex: Option<&Mutex<()>>,
+    path: &Path,
+    data: &[&[u8]],
+    with_hash: bool,
+    compressed: bool,
+) -> Result<u64, Error> {
     let data_size: u64 = data.iter().map(|buf| buf.len() as u64).sum();
-
     let hash = if with_hash { Some(hash(data)) } else { None };
-    let bytes_to_write = if with_hash { data_size + 8 } else { data_size };
 
-    if let Some(hash) = hash {
-        tracing::trace!("writing {bytes_to_write} bytes to {path:?}, hash = {hash:x}");
-    } else {
-        tracing::trace!("writing {bytes_to_write} bytes to {path:?}");
-    }
+    tracing::trace!("writing {path:?}");
 
     let path_tmp = path.with_extension("tmp");
+
+    let lock = disk_mutex.map(|m| m.lock().unwrap());
+
     let mut file = File::create(&path_tmp).map_err(|err| Error::CreateFileError {
         path: path_tmp.to_owned(),
         err,
     })?;
 
-    for data in data {
-        file.write_all(data).map_err(|err| Error::WriteFileError {
+    if compressed {
+        let mut encoder = Encoder::new(&mut file, 1).unwrap();
+        for data in data {
+            encoder
+                .write_all(data)
+                .map_err(|err| Error::CompressionError {
+                    path: path_tmp.to_owned(),
+                    err,
+                })?;
+        }
+        encoder.finish().map_err(|err| Error::CompressionError {
             path: path_tmp.to_owned(),
             err,
         })?;
+    } else {
+        for data in data {
+            file.write_all(data).map_err(|err| Error::WriteFileError {
+                path: path_tmp.to_owned(),
+                err,
+            })?;
+        }
     }
 
     if let Some(hash) = hash {
@@ -131,7 +160,6 @@ fn write_unlocked<'a>(path: &Path, data: &'a [&[u8]], with_hash: bool) -> Result
 
     drop(file);
 
-    // Check that the number of bytes written is exactly the size of the file
     let file_size = path_tmp
         .metadata()
         .map_err(|err| Error::ReadMetadataError {
@@ -140,12 +168,17 @@ fn write_unlocked<'a>(path: &Path, data: &'a [&[u8]], with_hash: bool) -> Result
         })?
         .len();
 
-    if file_size != bytes_to_write {
-        return Err(Error::IncorrectFileLength {
-            path: path_tmp.to_owned(),
-            expected: bytes_to_write,
-            actual: file_size,
-        });
+    let bytes_to_write_uncompressed = if with_hash { data_size + 8 } else { data_size };
+
+    if !compressed {
+        // Check that the number of bytes written is exactly the size of the file
+        if file_size != bytes_to_write_uncompressed {
+            return Err(Error::IncorrectFileLength {
+                path: path_tmp.to_owned(),
+                expected: bytes_to_write_uncompressed,
+                actual: file_size,
+            });
+        }
     }
 
     std::fs::rename(&path_tmp, &path).map_err(|err| Error::RenameFileError {
@@ -154,14 +187,30 @@ fn write_unlocked<'a>(path: &Path, data: &'a [&[u8]], with_hash: bool) -> Result
         err,
     })?;
 
+    if compressed {
+        tracing::trace!(
+            "wrote {file_size} bytes ({bytes_to_write_uncompressed} bytes uncompressed) to {path:?}"
+        );
+    } else {
+        tracing::trace!("wrote {file_size} bytes to {path:?}");
+    }
+
+    drop(lock);
+
     Ok(data_size)
 }
 
-fn read_unlocked(path: &Path, buf: &mut [u8], with_hash: bool) -> Result<(), Error> {
+fn read_uncompressed_to_buf(
+    disk_mutex: Option<&Mutex<()>>,
+    path: &Path,
+    buf: &mut [u8],
+    with_hash: bool,
+) -> Result<(), Error> {
     let buf_len = buf.len() as u64;
-    let bytes_to_read = if with_hash { buf_len + 8 } else { buf_len };
 
-    tracing::trace!("reading {bytes_to_read} bytes from file {path:?}");
+    tracing::trace!("reading file {path:?}");
+
+    let lock = disk_mutex.map(|m| m.lock().unwrap());
 
     let file_size = path
         .metadata()
@@ -171,10 +220,12 @@ fn read_unlocked(path: &Path, buf: &mut [u8], with_hash: bool) -> Result<(), Err
         })?
         .len();
 
-    if file_size != bytes_to_read {
+    let expected_file_size = if with_hash { buf_len + 8 } else { buf_len };
+
+    if file_size != expected_file_size {
         return Err(Error::IncorrectFileLength {
             path: path.to_owned(),
-            expected: bytes_to_read,
+            expected: expected_file_size,
             actual: file_size,
         });
     }
@@ -196,7 +247,90 @@ fn read_unlocked(path: &Path, buf: &mut [u8], with_hash: bool) -> Result<(), Err
                 err,
             })?;
 
+        drop(lock);
+
         let read_hash = u64::from_le_bytes(hash_buf);
+        let computed_hash = hash(&[&buf]);
+
+        if read_hash != computed_hash {
+            return Err(Error::ChecksumMismatch {
+                path: path.to_owned(),
+                expected: read_hash,
+                actual: computed_hash,
+            });
+        }
+    } else {
+        drop(lock);
+    }
+
+    tracing::trace!("read {file_size} bytes from file {path:?}");
+
+    Ok(())
+}
+
+fn read_compressed_to_buf(
+    disk_mutex: Option<&Mutex<()>>,
+    path: &Path,
+    buf: &mut [u8],
+    with_hash: bool,
+) -> Result<(), Error> {
+    let lock = disk_mutex.map(|m| m.lock().unwrap());
+
+    let file_len = path
+        .metadata()
+        .map_err(|err| Error::ReadMetadataError {
+            path: path.to_owned(),
+            err,
+        })?
+        .len();
+
+    tracing::trace!("reading file {path:?}");
+
+    let mut bytes = std::fs::read(path).map_err(|err| Error::ReadFileError {
+        path: path.to_owned(),
+        err,
+    })?;
+
+    drop(lock);
+
+    let bytes_len = bytes.len();
+
+    if bytes_len as u64 != file_len {
+        return Err(Error::IncorrectFileLength {
+            path: path.to_owned(),
+            expected: bytes_len as u64,
+            actual: file_len,
+        });
+    }
+
+    let read_hash = if with_hash {
+        let hash_buf: [u8; 8] = bytes.split_off(bytes_len - 8).try_into().unwrap();
+        let hash = u64::from_le_bytes(hash_buf);
+        Some(hash)
+    } else {
+        None
+    };
+
+    let mut decoder = Decoder::new(Cursor::new(&bytes)).unwrap();
+    decoder
+        .read_exact(buf)
+        .map_err(|err| Error::DecompressionError {
+            path: path.to_owned(),
+            err,
+        })?;
+
+    if decoder.finish().has_data_left().unwrap_or(true) {
+        return Err(Error::IncompleteDecompression {
+            path: path.to_owned(),
+        });
+    }
+
+    let decompressed_len = if with_hash { buf.len() + 8 } else { buf.len() };
+    tracing::trace!(
+        "read {bytes_len} bytes ({decompressed_len} bytes uncompressed) from file {path:?}"
+    );
+
+    if let Some(read_hash) = read_hash {
         let computed_hash = hash(&[&buf]);
 
         if read_hash != computed_hash {
@@ -211,7 +345,28 @@ fn read_unlocked(path: &Path, buf: &mut [u8], with_hash: bool) -> Result<(), Err
     Ok(())
 }
 
-fn read_unlocked_to_vec(path: &Path, with_hash: bool) -> Result<Vec<u8>, Error> {
+fn read_to_buf(
+    disk_mutex: Option<&Mutex<()>>,
+    path: &Path,
+    buf: &mut [u8],
+    with_hash: bool,
+    compressed: bool,
+) -> Result<(), Error> {
+    if compressed {
+        read_compressed_to_buf(disk_mutex, path, buf, with_hash)
+    } else {
+        read_uncompressed_to_buf(disk_mutex, path, buf, with_hash)
+    }
+}
+
+fn read_to_vec(
+    disk_mutex: Option<&Mutex<()>>,
+    path: &Path,
+    with_hash: bool,
+    compressed: bool,
+) -> Result<Vec<u8>, Error> {
+    let lock = disk_mutex.map(|m| m.lock().unwrap());
+
     let file_len = path
         .metadata()
         .map_err(|err| Error::ReadMetadataError {
@@ -220,12 +375,15 @@ fn read_unlocked_to_vec(path: &Path, with_hash: bool) -> Result<Vec<u8>, Error> 
         })?
         .len();
 
-    tracing::trace!("reading {file_len} bytes from file {path:?}");
+    tracing::trace!("reading file {path:?}");
 
-    let buf = std::fs::read(path).map_err(|err| Error::ReadFileError {
+    let mut buf = std::fs::read(path).map_err(|err| Error::ReadFileError {
         path: path.to_owned(),
         err,
     })?;
+
+    drop(lock);
+
     let buf_len = buf.len();
 
     if buf_len as u64 != file_len {
@@ -236,11 +394,35 @@ fn read_unlocked_to_vec(path: &Path, with_hash: bool) -> Result<Vec<u8>, Error> 
         });
     }
 
-    if with_hash {
-        let mut buf = buf;
+    let read_hash = if with_hash {
         let hash_buf: [u8; 8] = buf.split_off(buf_len - 8).try_into().unwrap();
+        let hash = u64::from_le_bytes(hash_buf);
+        Some(hash)
+    } else {
+        None
+    };
 
-        let read_hash = u64::from_le_bytes(hash_buf);
+    if compressed {
+        let mut decoder = Decoder::new(Cursor::new(&buf)).unwrap();
+        let mut decompressed_buf = Vec::new();
+        decoder
+            .read_to_end(&mut decompressed_buf)
+            .map_err(|err| Error::DecompressionError {
+                path: path.to_owned(),
+                err,
+            })?;
+        buf = decompressed_buf;
+
+        let decompressed_len = if with_hash { buf.len() + 8 } else { buf.len() };
+
+        tracing::trace!(
+            "read {buf_len} bytes ({decompressed_len} bytes uncompressed) from file {path:?}"
+        );
+    } else {
+        tracing::trace!("read {buf_len} bytes from file {path:?}");
+    }
+
+    if let Some(read_hash) = read_hash {
         let computed_hash = hash(&[&buf]);
 
         if read_hash != computed_hash {
@@ -257,8 +439,13 @@ fn read_unlocked_to_vec(path: &Path, with_hash: bool) -> Result<Vec<u8>, Error> 
     }
 }
 
-fn read_unlocked_to_string(path: &Path, with_hash: bool) -> Result<String, Error> {
-    String::from_utf8(read_unlocked_to_vec(path, with_hash)?).map_err(|err| {
+fn read_to_string(
+    disk_mutex: Option<&Mutex<()>>,
+    path: &Path,
+    with_hash: bool,
+    compressed: bool,
+) -> Result<String, Error> {
+    String::from_utf8(read_to_vec(disk_mutex, path, with_hash, compressed)?).map_err(|err| {
         Error::StringDataError {
             path: path.to_owned(),
             err,
@@ -318,50 +505,70 @@ impl<'a, P: BfsSettingsProvider> LockedDisk<'a, P> {
         }
     }
 
-    pub fn try_read_file(&self, path: &Path, buf: &mut [u8]) -> Result<(), Error> {
+    fn mutex(&self) -> Option<&Mutex<()>> {
+        self.settings.use_locked_io.then_some(&self.lock)
+    }
+
+    pub fn try_read_file(
+        &self,
+        path: &Path,
+        buf: &mut [u8],
+        compressed: bool,
+    ) -> Result<(), Error> {
         if !self.is_on_disk(path) {
             return Err(Error::FileNotOnDisk {
                 path: path.to_owned(),
             });
         }
 
-        let _lock = self.lock();
-
-        read_unlocked(path, buf, self.settings.compute_checksums)
+        read_to_buf(
+            self.mutex(),
+            path,
+            buf,
+            self.settings.compute_checksums,
+            compressed,
+        )
     }
 
-    pub fn try_read_to_string(&self, path: &Path) -> Result<String, Error> {
+    pub fn try_read_to_string(&self, path: &Path, compressed: bool) -> Result<String, Error> {
         if !self.is_on_disk(path) {
             return Err(Error::FileNotOnDisk {
                 path: path.to_owned(),
             });
         }
 
-        let _lock = self.lock();
-
-        read_unlocked_to_string(path, self.settings.compute_checksums)
+        read_to_string(
+            self.mutex(),
+            path,
+            self.settings.compute_checksums,
+            compressed,
+        )
     }
 
-    pub fn try_read_to_vec(&self, path: &Path) -> Result<Vec<u8>, Error> {
+    pub fn try_read_to_vec(&self, path: &Path, compressed: bool) -> Result<Vec<u8>, Error> {
         if !self.is_on_disk(path) {
             return Err(Error::FileNotOnDisk {
                 path: path.to_owned(),
             });
         }
 
-        let _lock = self.lock();
-
-        read_unlocked_to_vec(path, self.settings.compute_checksums)
+        read_to_vec(
+            self.mutex(),
+            path,
+            self.settings.compute_checksums,
+            compressed,
+        )
     }
 
-    pub fn try_write_file(&self, path: &Path, data: &[u8]) -> Result<u64, Error> {
-        self.try_write_file_multiple_buffers(path, &[data])
+    pub fn try_write_file(&self, path: &Path, data: &[u8], compressed: bool) -> Result<u64, Error> {
+        self.try_write_file_multiple_buffers(path, &[data], compressed)
     }
 
     pub fn try_write_file_multiple_buffers(
         &self,
         path: &Path,
         data: &[&[u8]],
+        compressed: bool,
     ) -> Result<u64, Error> {
         if !self.is_on_disk(path) {
             return Err(Error::FileNotOnDisk {
@@ -369,9 +576,13 @@ impl<'a, P: BfsSettingsProvider> LockedDisk<'a, P> {
             });
         }
 
-        let _lock = self.lock();
-
-        write_unlocked(path, data, self.settings.compute_checksums)
+        write(
+            self.mutex(),
+            path,
+            data,
+            self.settings.compute_checksums,
+            compressed,
+        )
     }
 
     fn try_delete_file(&self, path: &Path) -> Result<u64, Error> {
@@ -409,9 +620,14 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
         self.disks.len()
     }
 
-    pub fn try_read_file(&self, path: &Path, buf: &mut [u8]) -> Result<(), Error> {
+    pub fn try_read_file(
+        &self,
+        path: &Path,
+        buf: &mut [u8],
+        compressed: bool,
+    ) -> Result<(), Error> {
         for disk in &self.disks {
-            let result = disk.try_read_file(path, buf);
+            let result = disk.try_read_file(path, buf, compressed);
             match result {
                 Err(Error::FileNotOnDisk { .. }) => continue,
                 _ => return result,
@@ -423,9 +639,9 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
         })
     }
 
-    pub fn try_read_to_string(&self, path: &Path) -> Result<String, Error> {
+    pub fn try_read_to_string(&self, path: &Path, compressed: bool) -> Result<String, Error> {
         for disk in &self.disks {
-            let result = disk.try_read_to_string(path);
+            let result = disk.try_read_to_string(path, compressed);
             match result {
                 Err(Error::FileNotOnDisk { .. }) => continue,
                 _ => return result,
@@ -437,9 +653,9 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
         })
     }
 
-    pub fn try_read_to_vec(&self, path: &Path) -> Result<Vec<u8>, Error> {
+    pub fn try_read_to_vec(&self, path: &Path, compressed: bool) -> Result<Vec<u8>, Error> {
         for disk in &self.disks {
-            let result = disk.try_read_to_vec(path);
+            let result = disk.try_read_to_vec(path, compressed);
             match result {
                 Err(Error::FileNotOnDisk { .. }) => continue,
                 _ => return result,
@@ -451,9 +667,9 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
         })
     }
 
-    pub fn try_write_file(&self, path: &Path, data: &[u8]) -> Result<u64, Error> {
+    pub fn try_write_file(&self, path: &Path, data: &[u8], compressed: bool) -> Result<u64, Error> {
         for disk in &self.disks {
-            let result = disk.try_write_file(path, data);
+            let result = disk.try_write_file(path, data, compressed);
             match result {
                 Err(Error::FileNotOnDisk { .. }) => continue,
                 _ => return result,
@@ -469,9 +685,10 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
         &self,
         path: &Path,
         data: &[&[u8]],
+        compressed: bool,
     ) -> Result<u64, Error> {
         for disk in &self.disks {
-            let result = disk.try_write_file_multiple_buffers(path, data);
+            let result = disk.try_write_file_multiple_buffers(path, data, compressed);
             match result {
                 Err(Error::FileNotOnDisk { .. }) => continue,
                 _ => return result,
@@ -511,32 +728,37 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
         })
     }
 
-    pub fn read_file(&self, path: &Path, buf: &mut [u8]) {
-        self.try_read_file(path, buf)
+    pub fn read_file(&self, path: &Path, buf: &mut [u8], compressed: bool) {
+        self.try_read_file(path, buf, compressed)
             .inspect_err(|e| panic!("{e}"))
             .unwrap();
     }
 
-    pub fn read_to_string(&self, path: &Path) -> String {
-        self.try_read_to_string(path)
+    pub fn read_to_string(&self, path: &Path, compressed: bool) -> String {
+        self.try_read_to_string(path, compressed)
             .inspect_err(|e| panic!("{e}"))
             .unwrap()
     }
 
-    pub fn read_to_vec(&self, path: &Path) -> Vec<u8> {
-        self.try_read_to_vec(path)
+    pub fn read_to_vec(&self, path: &Path, compressed: bool) -> Vec<u8> {
+        self.try_read_to_vec(path, compressed)
             .inspect_err(|e| panic!("{e}"))
             .unwrap()
     }
 
-    pub fn write_file(&self, path: &Path, data: &[u8]) -> u64 {
-        self.try_write_file(path, data)
+    pub fn write_file(&self, path: &Path, data: &[u8], compressed: bool) -> u64 {
+        self.try_write_file(path, data, compressed)
             .inspect_err(|e| panic!("{e}"))
             .unwrap()
     }
 
-    pub fn write_file_multiple_buffers(&self, path: &Path, data: &[&[u8]]) -> u64 {
-        self.try_write_file_multiple_buffers(path, data)
+    pub fn write_file_multiple_buffers(
+        &self,
+        path: &Path,
+        data: &[&[u8]],
+        compressed: bool,
+    ) -> u64 {
+        self.try_write_file_multiple_buffers(path, data, compressed)
             .inspect_err(|e| panic!("{e}"))
             .unwrap()
     }

@@ -77,14 +77,15 @@ impl<
         let file_path = self.settings.new_positions_data_file_path(depth, chunk_idx);
         let mut buf = [0u8; 8];
 
-        self.locked_io.read_file(&file_path, &mut buf);
+        self.locked_io.read_file(&file_path, &mut buf, false);
 
         u64::from_le_bytes(buf)
     }
 
     fn write_new_positions_data_file(&self, new: u64, depth: usize, chunk_idx: usize) {
         let file_path = self.settings.new_positions_data_file_path(depth, chunk_idx);
-        self.locked_io.write_file(&file_path, &new.to_le_bytes());
+        self.locked_io
+            .write_file(&file_path, &new.to_le_bytes(), false);
     }
 
     fn delete_new_positions_data_dir(&self, depth: usize) {
@@ -96,20 +97,24 @@ impl<
 
     fn read_state(&self) -> Option<State> {
         let file_path = self.settings.state_file_path();
-        let str = self.locked_io.try_read_to_string(&file_path).ok()?;
+        let str = self.locked_io.try_read_to_string(&file_path, false).ok()?;
         serde_json::from_str(&str).ok()
     }
 
     fn write_state(&self, state: State) {
         let str = serde_json::to_string(&state).unwrap();
         let file_path = self.settings.state_file_path();
-        self.locked_io.write_file(&file_path, str.as_ref());
+        self.locked_io.write_file(&file_path, str.as_ref(), false);
     }
 
     fn try_read_chunk(&self, chunk_buffer: &mut [u8], depth: usize, chunk_idx: usize) -> bool {
         let file_path = self.settings.chunk_file_path(depth, chunk_idx);
 
-        let result = self.locked_io.try_read_file(&file_path, chunk_buffer);
+        let result = self.locked_io.try_read_file(
+            &file_path,
+            chunk_buffer,
+            self.settings.compress_bit_arrays,
+        );
 
         match result {
             Ok(()) => true,
@@ -134,7 +139,8 @@ impl<
 
     fn write_chunk(&self, chunk_buffer: &[u8], depth: usize, chunk_idx: usize) {
         let file_path = self.settings.chunk_file_path(depth, chunk_idx);
-        self.locked_io.write_file(&file_path, chunk_buffer);
+        self.locked_io
+            .write_file(&file_path, chunk_buffer, self.settings.compress_bit_arrays);
     }
 
     fn delete_chunk_file(&self, depth: usize, chunk_idx: usize) {
@@ -159,14 +165,19 @@ impl<
         std::fs::create_dir_all(&dir_path).unwrap();
 
         let file_path = self.settings.exhausted_chunk_file_path(chunk_idx);
-        self.locked_io.write_file(&file_path, &depth.to_le_bytes());
+        self.locked_io
+            .write_file(&file_path, &depth.to_le_bytes(), false);
     }
 
     fn chunk_exhausted_depth(&self, chunk_idx: usize) -> Option<usize> {
         let file_path = self.settings.exhausted_chunk_file_path(chunk_idx);
         let mut buf = [0u8; std::mem::size_of::<usize>()];
 
-        if self.locked_io.try_read_file(&file_path, &mut buf).is_err() {
+        if self
+            .locked_io
+            .try_read_file(&file_path, &mut buf, false)
+            .is_err()
+        {
             return None;
         }
 
@@ -205,7 +216,9 @@ impl<
             .map(|entry| entry.path())
             .filter(|path| path.extension().is_none())
         {
-            let bytes = self.locked_io.read_to_vec(&file_path);
+            let bytes = self
+                .locked_io
+                .read_to_vec(&file_path, self.settings.compress_bit_arrays);
             assert_eq!(bytes.len(), update_buffer.len());
 
             for (buf_byte, &new) in update_buffer.iter_mut().zip(bytes.iter()) {
@@ -250,7 +263,7 @@ impl<
             .map(|entry| entry.path())
             .filter(|path| path.extension().is_none())
         {
-            let bytes = self.locked_io.read_to_vec(&file_path);
+            let bytes = self.locked_io.read_to_vec(&file_path, false);
             assert_eq!(bytes.len() % 4, 0);
 
             // Group the bytes into groups of 4
@@ -543,7 +556,7 @@ impl<
             let ext = path.extension().and_then(|ext| ext.to_str());
             ext.is_none() || ext == Some("used")
         }) {
-            let bytes = self.locked_io.read_to_vec(&file_path);
+            let bytes = self.locked_io.read_to_vec(&file_path, false);
             assert_eq!(bytes.len() % 4, 0);
 
             // Group the bytes into groups of 4
@@ -609,7 +622,9 @@ impl<
             let ext = path.extension().and_then(|ext| ext.to_str());
             ext.is_none() || ext == Some("used")
         }) {
-            let update_array_bytes = self.locked_io.read_to_vec(&file_path);
+            let update_array_bytes = self
+                .locked_io
+                .read_to_vec(&file_path, self.settings.compress_bit_arrays);
             assert_eq!(update_array_bytes.len(), self.settings.chunk_size_bytes);
 
             for (byte_idx, &update_byte) in update_array_bytes.iter().enumerate() {
@@ -817,7 +832,7 @@ impl<
 
             let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
             let file_path = dir_path.join(&file_names[chunk_idx]);
-            self.locked_io.write_file(&file_path, &update_bytes);
+            self.locked_io.write_file(&file_path, &update_bytes, false);
         }
     }
 
