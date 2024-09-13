@@ -5,7 +5,7 @@ use std::{
     string::FromUtf8Error,
 };
 
-use parking_lot::{Mutex, MutexGuard};
+use parking_lot::Mutex;
 use thiserror::Error;
 use xxhash_rust::xxh3::Xxh3Default;
 use zstd::{Decoder, Encoder};
@@ -453,7 +453,9 @@ fn read_to_string(
     })
 }
 
-fn delete_unlocked(paths: &[&Path]) -> Result<u64, Error> {
+fn delete(disk_mutex: Option<&Mutex<()>>, paths: &[&Path]) -> Result<u64, Error> {
+    let lock = disk_mutex.map(|m| m.lock());
+
     let mut bytes_deleted = 0;
 
     for &path in paths {
@@ -475,6 +477,8 @@ fn delete_unlocked(paths: &[&Path]) -> Result<u64, Error> {
         bytes_deleted += file_len;
     }
 
+    drop(lock);
+
     Ok(bytes_deleted)
 }
 
@@ -495,14 +499,6 @@ impl<'a, P: BfsSettingsProvider> LockedDisk<'a, P> {
 
     fn is_on_disk(&self, path: &Path) -> bool {
         path.starts_with(&self.disk_path)
-    }
-
-    fn lock(&self) -> Option<MutexGuard<()>> {
-        if self.settings.use_locked_io {
-            Some(self.lock.lock())
-        } else {
-            None
-        }
     }
 
     fn mutex(&self) -> Option<&Mutex<()>> {
@@ -596,9 +592,7 @@ impl<'a, P: BfsSettingsProvider> LockedDisk<'a, P> {
             });
         }
 
-        let _lock = self.lock();
-
-        delete_unlocked(paths)
+        delete(self.mutex(), paths)
     }
 }
 
