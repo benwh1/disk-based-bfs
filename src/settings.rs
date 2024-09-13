@@ -56,6 +56,9 @@ pub enum BfsSettingsError {
     #[error("`update_files_compression_threshold` not set")]
     UpdateFilesCompressionThresholdNotSet,
 
+    #[error("`update_array_threshold` not set")]
+    UpdateArrayThresholdNotSet,
+
     #[error("`use_locked_io` not set")]
     UseLockedIoNotSet,
 
@@ -112,6 +115,7 @@ pub struct BfsSettingsBuilder<P: BfsSettingsProvider> {
     root_directories: Option<Vec<PathBuf>>,
     initial_memory_limit: Option<usize>,
     update_files_compression_threshold: Option<u64>,
+    update_array_threshold: Option<u64>,
     use_locked_io: Option<bool>,
     sync_filesystem: Option<bool>,
     compute_checksums: Option<bool>,
@@ -137,6 +141,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             root_directories: None,
             initial_memory_limit: None,
             update_files_compression_threshold: None,
+            update_array_threshold: None,
             use_locked_io: None,
             sync_filesystem: None,
             compute_checksums: None,
@@ -194,6 +199,11 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
         update_files_compression_threshold: u64,
     ) -> Self {
         self.update_files_compression_threshold = Some(update_files_compression_threshold);
+        self
+    }
+
+    pub fn update_array_threshold(mut self, update_array_threshold: u64) -> Self {
+        self.update_array_threshold = Some(update_array_threshold);
         self
     }
 
@@ -283,6 +293,9 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
                 .initial_memory_limit
                 .ok_or(BfsSettingsError::InitialMemoryLimitNotSet)?,
             update_files_compression_threshold,
+            update_array_threshold: self
+                .update_array_threshold
+                .ok_or(BfsSettingsError::UpdateArrayThresholdNotSet)?,
             use_locked_io: self
                 .use_locked_io
                 .ok_or(BfsSettingsError::UseLockedIoNotSet)?,
@@ -310,6 +323,7 @@ pub struct BfsSettings<P: BfsSettingsProvider> {
     pub(crate) root_directories: Vec<PathBuf>,
     pub(crate) initial_memory_limit: usize,
     pub(crate) update_files_compression_threshold: u64,
+    pub(crate) update_array_threshold: u64,
     pub(crate) use_locked_io: bool,
     pub(crate) sync_filesystem: bool,
     pub(crate) compute_checksums: bool,

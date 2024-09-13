@@ -120,12 +120,15 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         let depth = filled_blocks[0].depth();
         let chunk_idx = filled_blocks[0].chunk_idx();
 
-        let bytes_to_write = filled_blocks.iter().map(|block| block.len()).sum::<usize>()
-            * std::mem::size_of::<u32>();
+        let bytes_to_write = filled_blocks
+            .iter()
+            .map(|block| block.len() as u64)
+            .sum::<u64>()
+            * std::mem::size_of::<u32>() as u64;
 
-        // If the number of bytes to write is greater than the size of a chunk, then compress it
-        // into an update array to save space
-        if bytes_to_write > self.settings.chunk_size_bytes {
+        // If the number of bytes to write is greater than the threshold, compress it into an
+        // update array
+        if bytes_to_write > self.settings.update_array_threshold {
             let mut update_buffer = vec![0u8; self.settings.chunk_size_bytes];
 
             for block in filled_blocks {
