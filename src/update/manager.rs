@@ -1,10 +1,7 @@
-use std::{
-    collections::HashMap,
-    sync::{Mutex, RwLock},
-    thread::Builder as ThreadBuilder,
-};
+use std::{collections::HashMap, thread::Builder as ThreadBuilder};
 
 use itertools::Itertools;
+use parking_lot::{Mutex, RwLock};
 use rand::distributions::{Alphanumeric, DistString as _};
 
 use crate::{
@@ -92,7 +89,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
                                 // Finished processing the blocks, so clear them and put them back
                                 // in `self.available_blocks`
-                                let mut available_blocks_lock = available_blocks.lock().unwrap();
+                                let mut available_blocks_lock = available_blocks.lock();
                                 for block in filled_blocks {
                                     available_blocks_lock.push(block.clear());
                                 }
@@ -158,7 +155,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
                     .locked_io
                     .write_file_multiple_buffers(&file_path, &buffers, false);
 
-                let mut sizes_lock = self.sizes.write().unwrap();
+                let mut sizes_lock = self.sizes.write();
                 let sizes_for_depth = sizes_lock
                     .entry(depth)
                     .or_insert_with(|| vec![0; self.settings.num_array_chunks()]);
@@ -169,7 +166,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
     }
 
     pub fn write_all(&self) {
-        let mut filled_blocks_lock = self.filled_blocks.lock().unwrap();
+        let mut filled_blocks_lock = self.filled_blocks.lock();
         let filled_blocks = std::mem::take(&mut *filled_blocks_lock);
         drop(filled_blocks_lock);
 
@@ -178,7 +175,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
     /// Write all blocks that have the given `source_depth` and `source_chunk_idx`
     pub fn write_from_source(&self, source_depth: usize, source_chunk_idx: usize) {
-        let mut filled_blocks_lock = self.filled_blocks.lock().unwrap();
+        let mut filled_blocks_lock = self.filled_blocks.lock();
         let filled_blocks = std::mem::take(&mut *filled_blocks_lock);
 
         // Separate out the blocks that we will write to disk
@@ -197,7 +194,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
     pub fn take(&self) -> AvailableUpdateBlock {
         loop {
-            if let Some(block) = self.available_blocks.lock().unwrap().pop() {
+            if let Some(block) = self.available_blocks.lock().pop() {
                 return block;
             }
 
@@ -211,9 +208,9 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
     /// should compress the update files, and it really doesn't matter if we sometimes compress them
     /// slightly before or after the actual size reaches the threshold.
     fn write_sizes_to_disk(&self) {
-        let _lock = self.size_file_lock.lock().unwrap();
+        let _lock = self.size_file_lock.lock();
 
-        let read_lock = self.sizes.read().unwrap();
+        let read_lock = self.sizes.read();
         let str = serde_json::to_string(&*read_lock).unwrap();
         drop(read_lock);
 
@@ -231,12 +228,12 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         let str = self.locked_io.try_read_to_string(&path, false).unwrap();
         let hashmap = serde_json::from_str(&str).unwrap();
 
-        let mut lock = self.sizes.write().unwrap();
+        let mut lock = self.sizes.write();
         *lock = hashmap;
     }
 
     pub fn put(&self, block: FilledUpdateBlock) {
-        self.filled_blocks.lock().unwrap().push(block);
+        self.filled_blocks.lock().push(block);
     }
 
     fn delete_update_files_impl(&self, depth: usize, chunk_idx: usize, delete_used_only: bool) {
@@ -271,7 +268,6 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
         self.sizes
             .write()
-            .unwrap()
             .entry(depth)
             .and_modify(|entry| entry[chunk_idx] = real_size);
 
@@ -318,7 +314,6 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
         self.sizes
             .write()
-            .unwrap()
             .entry(depth)
             .and_modify(|entry| entry[chunk_idx] = real_size);
 
@@ -353,7 +348,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
             self.locked_io
                 .write_file(&file_path, update_buffer, self.settings.compress_bit_arrays);
 
-        let mut sizes_lock = self.sizes.write().unwrap();
+        let mut sizes_lock = self.sizes.write();
         let sizes_for_depth = sizes_lock
             .entry(depth)
             .or_insert_with(|| vec![0; self.settings.num_array_chunks()]);
@@ -362,7 +357,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
     }
 
     pub fn files_size(&self, depth: usize, chunk_idx: usize) -> u64 {
-        let read_lock = self.sizes.read().unwrap();
+        let read_lock = self.sizes.read();
         read_lock.get(&depth).map_or(0, |sizes| sizes[chunk_idx])
     }
 

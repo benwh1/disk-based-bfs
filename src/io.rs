@@ -3,9 +3,9 @@ use std::{
     io::{BufRead as _, Cursor, Error as IoError, ErrorKind, Read, Write},
     path::{Path, PathBuf},
     string::FromUtf8Error,
-    sync::{Mutex, MutexGuard},
 };
 
+use parking_lot::{Mutex, MutexGuard};
 use thiserror::Error;
 use xxhash_rust::xxh3::Xxh3Default;
 use zstd::{Decoder, Encoder};
@@ -120,7 +120,7 @@ fn write(
 
     let path_tmp = path.with_extension("tmp");
 
-    let lock = disk_mutex.map(|m| m.lock().unwrap());
+    let lock = disk_mutex.map(|m| m.lock());
 
     let mut file = File::create(&path_tmp).map_err(|err| Error::CreateFileError {
         path: path_tmp.to_owned(),
@@ -210,7 +210,7 @@ fn read_uncompressed_to_buf(
 
     tracing::trace!("reading file {path:?}");
 
-    let lock = disk_mutex.map(|m| m.lock().unwrap());
+    let lock = disk_mutex.map(|m| m.lock());
 
     let file_size = path
         .metadata()
@@ -274,7 +274,7 @@ fn read_compressed_to_buf(
     buf: &mut [u8],
     with_hash: bool,
 ) -> Result<(), Error> {
-    let lock = disk_mutex.map(|m| m.lock().unwrap());
+    let lock = disk_mutex.map(|m| m.lock());
 
     let file_len = path
         .metadata()
@@ -365,7 +365,7 @@ fn read_to_vec(
     with_hash: bool,
     compressed: bool,
 ) -> Result<Vec<u8>, Error> {
-    let lock = disk_mutex.map(|m| m.lock().unwrap());
+    let lock = disk_mutex.map(|m| m.lock());
 
     let file_len = path
         .metadata()
@@ -499,7 +499,7 @@ impl<'a, P: BfsSettingsProvider> LockedDisk<'a, P> {
 
     fn lock(&self) -> Option<MutexGuard<()>> {
         if self.settings.use_locked_io {
-            Some(self.lock.lock().expect("failed to acquire lock"))
+            Some(self.lock.lock())
         } else {
             None
         }
