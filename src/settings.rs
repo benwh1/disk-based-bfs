@@ -133,6 +133,7 @@ impl<P: BfsSettingsProvider> Default for BfsSettingsBuilder<P> {
 }
 
 impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             threads: 1,
@@ -154,51 +155,61 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
         }
     }
 
+    #[must_use]
     pub fn threads(mut self, threads: usize) -> Self {
         self.threads = threads;
         self
     }
 
+    #[must_use]
     pub fn chunk_size_bytes(mut self, chunk_size_bytes: usize) -> Self {
         self.chunk_size_bytes = Some(chunk_size_bytes);
         self
     }
 
+    #[must_use]
     pub fn update_memory(mut self, update_memory: usize) -> Self {
         self.update_memory = Some(update_memory);
         self
     }
 
+    #[must_use]
     pub fn num_update_blocks(mut self, num_update_blocks: usize) -> Self {
         self.num_update_blocks = Some(num_update_blocks);
         self
     }
 
+    #[must_use]
     pub fn capacity_check_frequency(mut self, capacity_check_frequency: usize) -> Self {
         self.capacity_check_frequency = Some(capacity_check_frequency);
         self
     }
 
+    #[must_use]
     pub fn initial_states(mut self, initial_states: &[u64]) -> Self {
         self.initial_states = Some(initial_states.to_vec());
         self
     }
 
+    #[must_use]
     pub fn state_size(mut self, state_size: u64) -> Self {
         self.state_size = Some(state_size);
         self
     }
 
+    #[must_use]
     pub fn root_directories(mut self, root_directories: &[PathBuf]) -> Self {
         self.root_directories = Some(root_directories.to_vec());
         self
     }
 
+    #[must_use]
     pub fn initial_memory_limit(mut self, initial_memory_limit: usize) -> Self {
         self.initial_memory_limit = Some(initial_memory_limit);
         self
     }
 
+    #[must_use]
     pub fn update_files_compression_threshold(
         mut self,
         update_files_compression_threshold: u64,
@@ -207,31 +218,37 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
         self
     }
 
+    #[must_use]
     pub fn update_array_threshold(mut self, update_array_threshold: u64) -> Self {
         self.update_array_threshold = Some(update_array_threshold);
         self
     }
 
+    #[must_use]
     pub fn use_locked_io(mut self, use_locked_io: bool) -> Self {
         self.use_locked_io = Some(use_locked_io);
         self
     }
 
+    #[must_use]
     pub fn sync_filesystem(mut self, sync_filesystem: bool) -> Self {
         self.sync_filesystem = Some(sync_filesystem);
         self
     }
 
+    #[must_use]
     pub fn compute_checksums(mut self, compute_checksums: bool) -> Self {
         self.compute_checksums = Some(compute_checksums);
         self
     }
 
+    #[must_use]
     pub fn compress_bit_arrays(mut self, compress_bit_arrays: bool) -> Self {
         self.compress_bit_arrays = Some(compress_bit_arrays);
         self
     }
 
+    #[must_use]
     pub fn settings_provider(mut self, settings_provider: P) -> Self {
         self.settings_provider = Some(settings_provider);
         self
@@ -346,7 +363,7 @@ pub struct BfsSettings<P: BfsSettingsProvider> {
 
 impl<P: BfsSettingsProvider> BfsSettings<P> {
     fn array_bytes(&self) -> usize {
-        self.state_size.div_ceil(8) as usize
+        self.state_size as usize / 8
     }
 
     pub(crate) fn num_array_chunks(&self) -> usize {

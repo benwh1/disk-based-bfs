@@ -45,7 +45,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
     }
 
     /// Write filled blocks to disk and put them back in `self.available_blocks`
-    fn write_and_put(&self, mut filled_blocks: Vec<FilledUpdateBlock>) {
+    fn write_and_put(&self, filled_blocks: Vec<FilledUpdateBlock>) {
         if filled_blocks.is_empty() {
             return;
         }
@@ -57,7 +57,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         // Sort all the blocks into chunks that will be written to the same disk so that each chunk
         // can be processed by a separate thread
         let mut chunked_filled_blocks = (0..num_disks).map(|_| Vec::new()).collect::<Vec<_>>();
-        for block in filled_blocks.drain(..) {
+        for block in filled_blocks.into_iter() {
             let chunk_root_idx = self
                 .settings
                 .settings_provider
@@ -67,7 +67,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
         // Sort each chunk by depth and chunk_idx so that blocks that can be written to the same
         // file are consecutive in the list
-        for chunk in chunked_filled_blocks.iter_mut() {
+        for chunk in &mut chunked_filled_blocks {
             chunk.sort_unstable_by_key(|block| (block.depth(), block.chunk_idx()));
         }
 

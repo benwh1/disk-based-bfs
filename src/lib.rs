@@ -1,6 +1,7 @@
 #![feature(array_chunks)]
 #![feature(buf_read_has_data_left)]
 #![feature(once_cell_get_mut)]
+#![warn(clippy::must_use_candidate)]
 #![deny(clippy::use_self)]
 #![deny(clippy::if_not_else)]
 #![deny(clippy::inconsistent_struct_constructor)]
@@ -11,6 +12,14 @@
 #![deny(clippy::partialeq_to_none)]
 #![deny(clippy::flat_map_option)]
 #![deny(clippy::doc_markdown)]
+#![deny(clippy::double_must_use)]
+#![deny(clippy::iter_not_returning_iterator)]
+#![deny(clippy::mod_module_files)]
+#![deny(clippy::explicit_iter_loop)]
+#![deny(clippy::implicit_clone)]
+#![deny(clippy::iter_with_drain)]
+#![deny(clippy::branches_sharing_code)]
+#![deny(clippy::redundant_clone)]
 
 pub mod bfs;
 pub mod callback;

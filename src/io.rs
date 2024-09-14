@@ -120,7 +120,7 @@ fn write(
     let lock = disk_mutex.map(|m| m.lock());
 
     let mut file = File::create(&path_tmp).map_err(|err| Error::CreateFile {
-        path: path_tmp.to_owned(),
+        path: path_tmp.clone(),
         err,
     })?;
 
@@ -128,18 +128,18 @@ fn write(
         let mut encoder = Encoder::new(&mut file, 1).unwrap();
         for data in data {
             encoder.write_all(data).map_err(|err| Error::Compression {
-                path: path_tmp.to_owned(),
+                path: path_tmp.clone(),
                 err,
             })?;
         }
         encoder.finish().map_err(|err| Error::Compression {
-            path: path_tmp.to_owned(),
+            path: path_tmp.clone(),
             err,
         })?;
     } else {
         for data in data {
             file.write_all(data).map_err(|err| Error::WriteFile {
-                path: path_tmp.to_owned(),
+                path: path_tmp.clone(),
                 err,
             })?;
         }
@@ -148,7 +148,7 @@ fn write(
     if let Some(hash) = hash {
         file.write_all(&hash.to_le_bytes())
             .map_err(|err| Error::WriteFile {
-                path: path_tmp.to_owned(),
+                path: path_tmp.clone(),
                 err,
             })?;
     }
@@ -158,7 +158,7 @@ fn write(
     let file_size = path_tmp
         .metadata()
         .map_err(|err| Error::ReadMetadata {
-            path: path_tmp.to_owned(),
+            path: path_tmp.clone(),
             err,
         })?
         .len();
@@ -169,7 +169,7 @@ fn write(
         // Check that the number of bytes written is exactly the size of the file
         if file_size != bytes_to_write_uncompressed {
             return Err(Error::IncorrectFileLength {
-                path: path_tmp.to_owned(),
+                path: path_tmp,
                 expected: bytes_to_write_uncompressed,
                 actual: file_size,
             });
@@ -177,7 +177,7 @@ fn write(
     }
 
     std::fs::rename(&path_tmp, path).map_err(|err| Error::RenameFile {
-        old_path: path_tmp.to_owned(),
+        old_path: path_tmp.clone(),
         new_path: path.to_owned(),
         err,
     })?;
@@ -427,11 +427,9 @@ fn read_to_vec(
                 actual: computed_hash,
             });
         }
-
-        Ok(buf)
-    } else {
-        Ok(buf)
     }
+
+    Ok(buf)
 }
 
 fn read_to_string(
