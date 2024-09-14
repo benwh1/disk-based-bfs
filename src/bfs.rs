@@ -810,10 +810,6 @@ impl<
         let mut rng = rand::thread_rng();
         let num_chunks = self.settings.num_array_chunks();
 
-        let file_names = (0..num_chunks)
-            .map(|_| Alphanumeric.sample_string(&mut rng, 16))
-            .collect::<Vec<_>>();
-
         self.start_of_depth_init(depth - 1);
 
         for chunk_idx in 0..num_chunks {
@@ -831,8 +827,9 @@ impl<
             let update_bytes = bytemuck::cast_slice(&updates);
 
             let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
-            let file_path = dir_path.join(&file_names[chunk_idx]);
-            self.locked_io.write_file(&file_path, &update_bytes, false);
+            let file_name = Alphanumeric.sample_string(&mut rng, 16);
+            let file_path = dir_path.join(file_name);
+            self.locked_io.write_file(&file_path, update_bytes, false);
         }
     }
 

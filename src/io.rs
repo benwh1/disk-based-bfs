@@ -14,8 +14,8 @@ use crate::settings::{BfsSettings, BfsSettingsProvider};
 
 #[derive(Debug, Error)]
 pub(crate) enum Error {
-    #[error("ReadMetadataError: failed to read metadata of file {path:?}: {err}")]
-    ReadMetadataError { path: PathBuf, err: IoError },
+    #[error("ReadMetadata: failed to read metadata of file {path:?}: {err}")]
+    ReadMetadata { path: PathBuf, err: IoError },
 
     #[error(
         "IncorrectFileLength: unexpected length of file {path:?} (expected {expected} bytes, \
@@ -27,30 +27,30 @@ pub(crate) enum Error {
         actual: u64,
     },
 
-    #[error("CreateFileError: failed to create file {path:?}: {err}")]
-    CreateFileError { path: PathBuf, err: IoError },
+    #[error("CreateFile: failed to create file {path:?}: {err}")]
+    CreateFile { path: PathBuf, err: IoError },
 
-    #[error("OpenFileError: failed to open file {path:?}: {err}")]
-    OpenFileError { path: PathBuf, err: IoError },
+    #[error("OpenFile: failed to open file {path:?}: {err}")]
+    OpenFile { path: PathBuf, err: IoError },
 
-    #[error("ReadFileError: failed to read file {path:?}: {err}")]
-    ReadFileError { path: PathBuf, err: IoError },
+    #[error("ReadFile: failed to read file {path:?}: {err}")]
+    ReadFile { path: PathBuf, err: IoError },
 
-    #[error("WriteFileError: failed to write to file {path:?}: {err}")]
-    WriteFileError { path: PathBuf, err: IoError },
+    #[error("WriteFile: failed to write to file {path:?}: {err}")]
+    WriteFile { path: PathBuf, err: IoError },
 
-    #[error("DeleteFileError: failed to delete file {path:?}: {err}")]
-    DeleteFileError { path: PathBuf, err: IoError },
+    #[error("DeleteFile: failed to delete file {path:?}: {err}")]
+    DeleteFile { path: PathBuf, err: IoError },
 
-    #[error("RenameFileError: failed to rename file {old_path:?} to {new_path:?}: {err}")]
-    RenameFileError {
+    #[error("RenameFile: failed to rename file {old_path:?} to {new_path:?}: {err}")]
+    RenameFile {
         old_path: PathBuf,
         new_path: PathBuf,
         err: IoError,
     },
 
-    #[error("StringDataError: invalid UTF-8 data in file {path:?}: {err}")]
-    StringDataError { path: PathBuf, err: FromUtf8Error },
+    #[error("StringData: invalid UTF-8 data in file {path:?}: {err}")]
+    StringData { path: PathBuf, err: FromUtf8Error },
 
     #[error(
         "ChecksumMismatch: checksum mismatch for file {path:?} (expected {expected:x}, got \
@@ -74,11 +74,11 @@ pub(crate) enum Error {
     #[error("FilesNotOnSameDisk: files {paths:?} not on same disk")]
     FilesNotOnSameDisk { paths: Vec<PathBuf> },
 
-    #[error("CompressionError: failed to write compressed data to file {path:?}: {err}")]
-    CompressionError { path: PathBuf, err: IoError },
+    #[error("Compression: failed to write compressed data to file {path:?}: {err}")]
+    Compression { path: PathBuf, err: IoError },
 
-    #[error("DecompressionError: failed to read compressed data from file {path:?}: {err}")]
-    DecompressionError { path: PathBuf, err: IoError },
+    #[error("Decompression: failed to read compressed data from file {path:?}: {err}")]
+    Decompression { path: PathBuf, err: IoError },
 
     #[error("IncompleteDecompression: file {path:?} still has data left after decompression")]
     IncompleteDecompression { path: PathBuf },
@@ -87,14 +87,11 @@ pub(crate) enum Error {
 impl Error {
     /// Helper to check whether an error is due to a non-existent file being read
     pub(crate) fn is_read_nonexistent_file_error(&self) -> bool {
-        match self {
-            Self::ReadFileError { err, .. } | Self::ReadMetadataError { err, .. }
-                if err.kind() == ErrorKind::NotFound =>
-            {
-                true
-            }
-            _ => false,
-        }
+        matches!(
+            self,
+            Self::ReadFile { err, .. } | Self::ReadMetadata { err, .. }
+                if err.kind() == ErrorKind::NotFound
+        )
     }
 }
 
@@ -122,7 +119,7 @@ fn write(
 
     let lock = disk_mutex.map(|m| m.lock());
 
-    let mut file = File::create(&path_tmp).map_err(|err| Error::CreateFileError {
+    let mut file = File::create(&path_tmp).map_err(|err| Error::CreateFile {
         path: path_tmp.to_owned(),
         err,
     })?;
@@ -130,20 +127,18 @@ fn write(
     if compressed {
         let mut encoder = Encoder::new(&mut file, 1).unwrap();
         for data in data {
-            encoder
-                .write_all(data)
-                .map_err(|err| Error::CompressionError {
-                    path: path_tmp.to_owned(),
-                    err,
-                })?;
+            encoder.write_all(data).map_err(|err| Error::Compression {
+                path: path_tmp.to_owned(),
+                err,
+            })?;
         }
-        encoder.finish().map_err(|err| Error::CompressionError {
+        encoder.finish().map_err(|err| Error::Compression {
             path: path_tmp.to_owned(),
             err,
         })?;
     } else {
         for data in data {
-            file.write_all(data).map_err(|err| Error::WriteFileError {
+            file.write_all(data).map_err(|err| Error::WriteFile {
                 path: path_tmp.to_owned(),
                 err,
             })?;
@@ -152,7 +147,7 @@ fn write(
 
     if let Some(hash) = hash {
         file.write_all(&hash.to_le_bytes())
-            .map_err(|err| Error::WriteFileError {
+            .map_err(|err| Error::WriteFile {
                 path: path_tmp.to_owned(),
                 err,
             })?;
@@ -162,7 +157,7 @@ fn write(
 
     let file_size = path_tmp
         .metadata()
-        .map_err(|err| Error::ReadMetadataError {
+        .map_err(|err| Error::ReadMetadata {
             path: path_tmp.to_owned(),
             err,
         })?
@@ -181,7 +176,7 @@ fn write(
         }
     }
 
-    std::fs::rename(&path_tmp, &path).map_err(|err| Error::RenameFileError {
+    std::fs::rename(&path_tmp, path).map_err(|err| Error::RenameFile {
         old_path: path_tmp.to_owned(),
         new_path: path.to_owned(),
         err,
@@ -214,7 +209,7 @@ fn read_uncompressed_to_buf(
 
     let file_size = path
         .metadata()
-        .map_err(|err| Error::ReadMetadataError {
+        .map_err(|err| Error::ReadMetadata {
             path: path.to_owned(),
             err,
         })?
@@ -230,11 +225,11 @@ fn read_uncompressed_to_buf(
         });
     }
 
-    let mut file = File::open(path).map_err(|err| Error::OpenFileError {
+    let mut file = File::open(path).map_err(|err| Error::OpenFile {
         path: path.to_owned(),
         err,
     })?;
-    file.read_exact(buf).map_err(|err| Error::ReadFileError {
+    file.read_exact(buf).map_err(|err| Error::ReadFile {
         path: path.to_owned(),
         err,
     })?;
@@ -242,7 +237,7 @@ fn read_uncompressed_to_buf(
     if with_hash {
         let mut hash_buf = [0u8; 8];
         file.read_exact(&mut hash_buf)
-            .map_err(|err| Error::ReadFileError {
+            .map_err(|err| Error::ReadFile {
                 path: path.to_owned(),
                 err,
             })?;
@@ -250,7 +245,7 @@ fn read_uncompressed_to_buf(
         drop(lock);
 
         let read_hash = u64::from_le_bytes(hash_buf);
-        let computed_hash = hash(&[&buf]);
+        let computed_hash = hash(&[buf]);
 
         if read_hash != computed_hash {
             return Err(Error::ChecksumMismatch {
@@ -278,7 +273,7 @@ fn read_compressed_to_buf(
 
     let file_len = path
         .metadata()
-        .map_err(|err| Error::ReadMetadataError {
+        .map_err(|err| Error::ReadMetadata {
             path: path.to_owned(),
             err,
         })?
@@ -286,7 +281,7 @@ fn read_compressed_to_buf(
 
     tracing::trace!("reading file {path:?}");
 
-    let mut bytes = std::fs::read(path).map_err(|err| Error::ReadFileError {
+    let mut bytes = std::fs::read(path).map_err(|err| Error::ReadFile {
         path: path.to_owned(),
         err,
     })?;
@@ -314,7 +309,7 @@ fn read_compressed_to_buf(
     let mut decoder = Decoder::new(Cursor::new(&bytes)).unwrap();
     decoder
         .read_exact(buf)
-        .map_err(|err| Error::DecompressionError {
+        .map_err(|err| Error::Decompression {
             path: path.to_owned(),
             err,
         })?;
@@ -331,7 +326,7 @@ fn read_compressed_to_buf(
     );
 
     if let Some(read_hash) = read_hash {
-        let computed_hash = hash(&[&buf]);
+        let computed_hash = hash(&[buf]);
 
         if read_hash != computed_hash {
             return Err(Error::ChecksumMismatch {
@@ -369,7 +364,7 @@ fn read_to_vec(
 
     let file_len = path
         .metadata()
-        .map_err(|err| Error::ReadMetadataError {
+        .map_err(|err| Error::ReadMetadata {
             path: path.to_owned(),
             err,
         })?
@@ -377,7 +372,7 @@ fn read_to_vec(
 
     tracing::trace!("reading file {path:?}");
 
-    let mut buf = std::fs::read(path).map_err(|err| Error::ReadFileError {
+    let mut buf = std::fs::read(path).map_err(|err| Error::ReadFile {
         path: path.to_owned(),
         err,
     })?;
@@ -407,7 +402,7 @@ fn read_to_vec(
         let mut decompressed_buf = Vec::new();
         decoder
             .read_to_end(&mut decompressed_buf)
-            .map_err(|err| Error::DecompressionError {
+            .map_err(|err| Error::Decompression {
                 path: path.to_owned(),
                 err,
             })?;
@@ -446,7 +441,7 @@ fn read_to_string(
     compressed: bool,
 ) -> Result<String, Error> {
     String::from_utf8(read_to_vec(disk_mutex, path, with_hash, compressed)?).map_err(|err| {
-        Error::StringDataError {
+        Error::StringData {
             path: path.to_owned(),
             err,
         }
@@ -461,7 +456,7 @@ fn delete(disk_mutex: Option<&Mutex<()>>, paths: &[&Path]) -> Result<u64, Error>
     for &path in paths {
         let file_len = path
             .metadata()
-            .map_err(|err| Error::ReadMetadataError {
+            .map_err(|err| Error::ReadMetadata {
                 path: path.to_owned(),
                 err,
             })?
@@ -469,7 +464,7 @@ fn delete(disk_mutex: Option<&Mutex<()>>, paths: &[&Path]) -> Result<u64, Error>
 
         tracing::trace!("deleting {file_len} bytes from {path:?}");
 
-        std::fs::remove_file(path).map_err(|err| Error::DeleteFileError {
+        std::fs::remove_file(path).map_err(|err| Error::DeleteFile {
             path: path.to_owned(),
             err,
         })?;
