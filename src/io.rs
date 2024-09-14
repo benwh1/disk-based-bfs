@@ -103,12 +103,85 @@ fn hash(bufs: &[&[u8]]) -> u64 {
     hasher.digest()
 }
 
-fn write(
+fn write_compressed(
     disk_mutex: Option<&Mutex<()>>,
     path: &Path,
     data: &[&[u8]],
     with_hash: bool,
-    compressed: bool,
+) -> Result<u64, Error> {
+    let data_size: u64 = data.iter().map(|buf| buf.len() as u64).sum();
+    let hash = if with_hash { Some(hash(data)) } else { None };
+
+    tracing::trace!("writing {path:?}");
+
+    let path_tmp = path.with_extension("tmp");
+
+    let mut compressed_bytes = Vec::new();
+    let mut encoder = Encoder::new(&mut compressed_bytes, 1).unwrap();
+    for data in data {
+        encoder.write_all(bytemuck::cast_slice(data)).unwrap();
+    }
+    encoder.finish().unwrap();
+
+    let lock = disk_mutex.map(|m| m.lock());
+
+    let mut file = File::create(&path_tmp).map_err(|err| Error::CreateFile {
+        path: path_tmp.clone(),
+        err,
+    })?;
+
+    let mut encoder = Encoder::new(&mut file, 1).unwrap();
+    for data in data {
+        encoder.write_all(data).map_err(|err| Error::Compression {
+            path: path_tmp.clone(),
+            err,
+        })?;
+    }
+    encoder.finish().map_err(|err| Error::Compression {
+        path: path_tmp.clone(),
+        err,
+    })?;
+
+    if let Some(hash) = hash {
+        file.write_all(&hash.to_le_bytes())
+            .map_err(|err| Error::WriteFile {
+                path: path_tmp.clone(),
+                err,
+            })?;
+    }
+
+    drop(file);
+
+    let file_size = path_tmp
+        .metadata()
+        .map_err(|err| Error::ReadMetadata {
+            path: path_tmp.clone(),
+            err,
+        })?
+        .len();
+
+    std::fs::rename(&path_tmp, path).map_err(|err| Error::RenameFile {
+        old_path: path_tmp.clone(),
+        new_path: path.to_owned(),
+        err,
+    })?;
+
+    let bytes_to_write_uncompressed = if with_hash { data_size + 8 } else { data_size };
+
+    tracing::trace!(
+        "wrote {file_size} bytes ({bytes_to_write_uncompressed} bytes uncompressed) to {path:?}"
+    );
+
+    drop(lock);
+
+    Ok(file_size)
+}
+
+fn write_uncompressed(
+    disk_mutex: Option<&Mutex<()>>,
+    path: &Path,
+    data: &[&[u8]],
+    with_hash: bool,
 ) -> Result<u64, Error> {
     let data_size: u64 = data.iter().map(|buf| buf.len() as u64).sum();
     let hash = if with_hash { Some(hash(data)) } else { None };
@@ -124,25 +197,11 @@ fn write(
         err,
     })?;
 
-    if compressed {
-        let mut encoder = Encoder::new(&mut file, 1).unwrap();
-        for data in data {
-            encoder.write_all(data).map_err(|err| Error::Compression {
-                path: path_tmp.clone(),
-                err,
-            })?;
-        }
-        encoder.finish().map_err(|err| Error::Compression {
+    for data in data {
+        file.write_all(data).map_err(|err| Error::WriteFile {
             path: path_tmp.clone(),
             err,
         })?;
-    } else {
-        for data in data {
-            file.write_all(data).map_err(|err| Error::WriteFile {
-                path: path_tmp.clone(),
-                err,
-            })?;
-        }
     }
 
     if let Some(hash) = hash {
@@ -165,15 +224,13 @@ fn write(
 
     let bytes_to_write_uncompressed = if with_hash { data_size + 8 } else { data_size };
 
-    if !compressed {
-        // Check that the number of bytes written is exactly the size of the file
-        if file_size != bytes_to_write_uncompressed {
-            return Err(Error::IncorrectFileLength {
-                path: path_tmp,
-                expected: bytes_to_write_uncompressed,
-                actual: file_size,
-            });
-        }
+    // Check that the number of bytes written is exactly the size of the file
+    if file_size != bytes_to_write_uncompressed {
+        return Err(Error::IncorrectFileLength {
+            path: path_tmp,
+            expected: bytes_to_write_uncompressed,
+            actual: file_size,
+        });
     }
 
     std::fs::rename(&path_tmp, path).map_err(|err| Error::RenameFile {
@@ -182,17 +239,25 @@ fn write(
         err,
     })?;
 
-    if compressed {
-        tracing::trace!(
-            "wrote {file_size} bytes ({bytes_to_write_uncompressed} bytes uncompressed) to {path:?}"
-        );
-    } else {
-        tracing::trace!("wrote {file_size} bytes to {path:?}");
-    }
+    tracing::trace!("wrote {file_size} bytes to {path:?}");
 
     drop(lock);
 
     Ok(file_size)
+}
+
+fn write(
+    disk_mutex: Option<&Mutex<()>>,
+    path: &Path,
+    data: &[&[u8]],
+    with_hash: bool,
+    compressed: bool,
+) -> Result<u64, Error> {
+    if compressed {
+        write_compressed(disk_mutex, path, data, with_hash)
+    } else {
+        write_uncompressed(disk_mutex, path, data, with_hash)
+    }
 }
 
 fn read_uncompressed_to_buf(
