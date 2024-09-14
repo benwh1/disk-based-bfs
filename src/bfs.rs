@@ -806,26 +806,21 @@ impl<
         (byte_idx, bit_idx)
     }
 
-    fn create_initial_update_files(&self, next: &HashSet<u64>, depth: usize) {
+    fn create_initial_update_files(&self, next: HashSet<u64>, depth: usize) {
         let mut rng = rand::thread_rng();
         let num_chunks = self.settings.num_array_chunks();
 
         self.start_of_depth_init(depth - 1);
 
-        for chunk_idx in 0..num_chunks {
-            let updates = next
-                .iter()
-                .filter_map(|&val| {
-                    let (idx, offset) = self.node_to_chunk_coords(val);
-                    if idx == chunk_idx {
-                        Some(offset)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            let update_bytes = bytemuck::cast_slice(&updates);
+        let mut vecs = vec![Vec::new(); num_chunks];
 
+        for val in next {
+            let (chunk_idx, offset) = self.node_to_chunk_coords(val);
+            vecs[chunk_idx].push(offset);
+        }
+
+        for (chunk_idx, chunk_updates) in vecs.into_iter().enumerate() {
+            let update_bytes = bytemuck::cast_slice(&chunk_updates);
             let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
             let file_name = Alphanumeric.sample_string(&mut rng, 16);
             let file_path = dir_path.join(file_name);
@@ -1237,8 +1232,7 @@ impl<
 
         tracing::info!("starting disk BFS");
 
-        self.create_initial_update_files(&next, depth);
-        drop(next);
+        self.create_initial_update_files(next, depth);
 
         let new_positions = self.do_iteration(Some(&[&old, &current]), depth);
 
