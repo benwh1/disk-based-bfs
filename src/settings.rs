@@ -107,6 +107,7 @@ pub enum BfsSettingsError {
     },
 }
 
+#[derive(Debug)]
 pub struct BfsSettingsBuilder<P: BfsSettingsProvider> {
     threads: usize,
     chunk_size_bytes: Option<usize>,
@@ -342,6 +343,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
     }
 }
 
+#[derive(Debug)]
 pub struct BfsSettings<P: BfsSettingsProvider> {
     pub(crate) threads: usize,
     pub(crate) chunk_size_bytes: usize,
