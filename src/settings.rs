@@ -100,7 +100,7 @@ pub enum BfsSettingsError {
         ({})",
         threads * num_chunks,
     )]
-    UpdateVecsTooLarge {
+    NotEnoughUpdateBlocks {
         num_update_blocks: usize,
         threads: usize,
         num_chunks: usize,
@@ -293,7 +293,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             .ok_or(BfsSettingsError::NumUpdateBlocksNotSet)?;
         let num_chunks = state_size as usize / (8 * chunk_size_bytes);
         if num_update_blocks <= self.threads * num_chunks {
-            return Err(BfsSettingsError::UpdateVecsTooLarge {
+            return Err(BfsSettingsError::NotEnoughUpdateBlocks {
                 num_update_blocks,
                 threads: self.threads,
                 num_chunks,
