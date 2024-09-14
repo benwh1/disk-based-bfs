@@ -623,10 +623,18 @@ impl<
             assert_eq!(update_array_bytes.len(), self.settings.chunk_size_bytes);
 
             for (byte_idx, &update_byte) in update_array_bytes.iter().enumerate() {
+                if update_byte == 0 {
+                    continue;
+                }
+
+                let chunk_byte = chunk_buffer[byte_idx];
+
+                if chunk_byte == 0b11111111 {
+                    continue;
+                }
+
                 for bit_idx in 0..8 {
-                    let chunk_byte = chunk_buffer[byte_idx];
                     if (update_byte >> bit_idx) & 1 == 1 && (chunk_byte >> bit_idx) & 1 == 0 {
-                        chunk_buffer[byte_idx] |= 1 << bit_idx;
                         new_positions += 1;
 
                         let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
@@ -652,6 +660,8 @@ impl<
                         }
                     }
                 }
+
+                chunk_buffer[byte_idx] |= update_byte;
             }
         }
 
