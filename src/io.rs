@@ -192,7 +192,7 @@ fn write(
 
     drop(lock);
 
-    Ok(data_size)
+    Ok(file_size)
 }
 
 fn read_uncompressed_to_buf(
