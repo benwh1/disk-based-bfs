@@ -13,7 +13,7 @@ use crate::{
     update::{blocks::FillableUpdateBlock, manager::UpdateManager},
 };
 
-pub enum InMemoryBfsResult {
+pub(crate) enum InMemoryBfsResult {
     Complete,
     OutOfMemory {
         old: HashSet<u64, CityHasher>,
@@ -24,7 +24,7 @@ pub enum InMemoryBfsResult {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum State {
+enum State {
     Iteration { depth: usize },
     CompressAllUpdateFiles { depth: usize },
     Cleanup { depth: usize },

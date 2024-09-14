@@ -13,7 +13,7 @@ use zstd::{Decoder, Encoder};
 use crate::settings::{BfsSettings, BfsSettingsProvider};
 
 #[derive(Debug, Error)]
-pub enum Error {
+pub(crate) enum Error {
     #[error("ReadMetadataError: failed to read metadata of file {path:?}: {err}")]
     ReadMetadataError { path: PathBuf, err: IoError },
 
@@ -86,7 +86,7 @@ pub enum Error {
 
 impl Error {
     /// Helper to check whether an error is due to a non-existent file being read
-    pub fn is_read_nonexistent_file_error(&self) -> bool {
+    pub(crate) fn is_read_nonexistent_file_error(&self) -> bool {
         match self {
             Self::ReadFileError { err, .. } | Self::ReadMetadataError { err, .. }
                 if err.kind() == ErrorKind::NotFound =>
@@ -482,14 +482,14 @@ fn delete(disk_mutex: Option<&Mutex<()>>, paths: &[&Path]) -> Result<u64, Error>
     Ok(bytes_deleted)
 }
 
-pub struct LockedDisk<'a, P: BfsSettingsProvider> {
+pub(crate) struct LockedDisk<'a, P: BfsSettingsProvider> {
     settings: &'a BfsSettings<P>,
     lock: Mutex<()>,
     disk_path: PathBuf,
 }
 
 impl<'a, P: BfsSettingsProvider> LockedDisk<'a, P> {
-    pub fn new(settings: &'a BfsSettings<P>, disk_path: PathBuf) -> Self {
+    fn new(settings: &'a BfsSettings<P>, disk_path: PathBuf) -> Self {
         Self {
             settings,
             lock: Mutex::new(()),
@@ -505,12 +505,7 @@ impl<'a, P: BfsSettingsProvider> LockedDisk<'a, P> {
         self.settings.use_locked_io.then_some(&self.lock)
     }
 
-    pub fn try_read_file(
-        &self,
-        path: &Path,
-        buf: &mut [u8],
-        compressed: bool,
-    ) -> Result<(), Error> {
+    fn try_read_file(&self, path: &Path, buf: &mut [u8], compressed: bool) -> Result<(), Error> {
         if !self.is_on_disk(path) {
             return Err(Error::FileNotOnDisk {
                 path: path.to_owned(),
@@ -526,7 +521,7 @@ impl<'a, P: BfsSettingsProvider> LockedDisk<'a, P> {
         )
     }
 
-    pub fn try_read_to_string(&self, path: &Path, compressed: bool) -> Result<String, Error> {
+    fn try_read_to_string(&self, path: &Path, compressed: bool) -> Result<String, Error> {
         if !self.is_on_disk(path) {
             return Err(Error::FileNotOnDisk {
                 path: path.to_owned(),
@@ -541,7 +536,7 @@ impl<'a, P: BfsSettingsProvider> LockedDisk<'a, P> {
         )
     }
 
-    pub fn try_read_to_vec(&self, path: &Path, compressed: bool) -> Result<Vec<u8>, Error> {
+    fn try_read_to_vec(&self, path: &Path, compressed: bool) -> Result<Vec<u8>, Error> {
         if !self.is_on_disk(path) {
             return Err(Error::FileNotOnDisk {
                 path: path.to_owned(),
@@ -556,11 +551,11 @@ impl<'a, P: BfsSettingsProvider> LockedDisk<'a, P> {
         )
     }
 
-    pub fn try_write_file(&self, path: &Path, data: &[u8], compressed: bool) -> Result<u64, Error> {
+    fn try_write_file(&self, path: &Path, data: &[u8], compressed: bool) -> Result<u64, Error> {
         self.try_write_file_multiple_buffers(path, &[data], compressed)
     }
 
-    pub fn try_write_file_multiple_buffers(
+    fn try_write_file_multiple_buffers(
         &self,
         path: &Path,
         data: &[&[u8]],
@@ -610,11 +605,11 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
         Self { disks }
     }
 
-    pub fn num_disks(&self) -> usize {
+    pub(crate) fn num_disks(&self) -> usize {
         self.disks.len()
     }
 
-    pub fn try_read_file(
+    pub(crate) fn try_read_file(
         &self,
         path: &Path,
         buf: &mut [u8],
@@ -633,7 +628,11 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
         })
     }
 
-    pub fn try_read_to_string(&self, path: &Path, compressed: bool) -> Result<String, Error> {
+    pub(crate) fn try_read_to_string(
+        &self,
+        path: &Path,
+        compressed: bool,
+    ) -> Result<String, Error> {
         for disk in &self.disks {
             let result = disk.try_read_to_string(path, compressed);
             match result {
@@ -647,7 +646,7 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
         })
     }
 
-    pub fn try_read_to_vec(&self, path: &Path, compressed: bool) -> Result<Vec<u8>, Error> {
+    fn try_read_to_vec(&self, path: &Path, compressed: bool) -> Result<Vec<u8>, Error> {
         for disk in &self.disks {
             let result = disk.try_read_to_vec(path, compressed);
             match result {
@@ -661,7 +660,7 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
         })
     }
 
-    pub fn try_write_file(&self, path: &Path, data: &[u8], compressed: bool) -> Result<u64, Error> {
+    fn try_write_file(&self, path: &Path, data: &[u8], compressed: bool) -> Result<u64, Error> {
         for disk in &self.disks {
             let result = disk.try_write_file(path, data, compressed);
             match result {
@@ -675,7 +674,7 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
         })
     }
 
-    pub fn try_write_file_multiple_buffers(
+    fn try_write_file_multiple_buffers(
         &self,
         path: &Path,
         data: &[&[u8]],
@@ -694,7 +693,7 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
         })
     }
 
-    pub fn try_delete_file(&self, path: &Path) -> Result<u64, Error> {
+    pub(crate) fn try_delete_file(&self, path: &Path) -> Result<u64, Error> {
         for disk in &self.disks {
             let result = disk.try_delete_file(path);
             match result {
@@ -708,7 +707,7 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
         })
     }
 
-    pub fn try_delete_files(&self, paths: &[&Path]) -> Result<u64, Error> {
+    pub(crate) fn try_delete_files(&self, paths: &[&Path]) -> Result<u64, Error> {
         for disk in &self.disks {
             let result = disk.try_delete_files(paths);
             match result {
@@ -722,31 +721,31 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
         })
     }
 
-    pub fn read_file(&self, path: &Path, buf: &mut [u8], compressed: bool) {
+    pub(crate) fn read_file(&self, path: &Path, buf: &mut [u8], compressed: bool) {
         self.try_read_file(path, buf, compressed)
             .inspect_err(|e| panic!("{e}"))
             .unwrap();
     }
 
-    pub fn read_to_string(&self, path: &Path, compressed: bool) -> String {
+    fn read_to_string(&self, path: &Path, compressed: bool) -> String {
         self.try_read_to_string(path, compressed)
             .inspect_err(|e| panic!("{e}"))
             .unwrap()
     }
 
-    pub fn read_to_vec(&self, path: &Path, compressed: bool) -> Vec<u8> {
+    pub(crate) fn read_to_vec(&self, path: &Path, compressed: bool) -> Vec<u8> {
         self.try_read_to_vec(path, compressed)
             .inspect_err(|e| panic!("{e}"))
             .unwrap()
     }
 
-    pub fn write_file(&self, path: &Path, data: &[u8], compressed: bool) -> u64 {
+    pub(crate) fn write_file(&self, path: &Path, data: &[u8], compressed: bool) -> u64 {
         self.try_write_file(path, data, compressed)
             .inspect_err(|e| panic!("{e}"))
             .unwrap()
     }
 
-    pub fn write_file_multiple_buffers(
+    pub(crate) fn write_file_multiple_buffers(
         &self,
         path: &Path,
         data: &[&[u8]],
@@ -758,7 +757,7 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
     }
 }
 
-pub fn sync() {
+pub(crate) fn sync() {
     tracing::debug!("syncing filesystem");
 
     unsafe {

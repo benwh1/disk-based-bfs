@@ -10,7 +10,7 @@ use crate::{
     update::blocks::{AvailableUpdateBlock, FillableUpdateBlock, FilledUpdateBlock},
 };
 
-pub struct UpdateManager<'a, P: BfsSettingsProvider + Sync> {
+pub(crate) struct UpdateManager<'a, P: BfsSettingsProvider + Sync> {
     settings: &'a BfsSettings<P>,
     locked_io: &'a LockedIO<'a, P>,
     sizes: RwLock<HashMap<usize, Vec<u64>>>,
@@ -20,7 +20,7 @@ pub struct UpdateManager<'a, P: BfsSettingsProvider + Sync> {
 }
 
 impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
-    pub fn new(settings: &'a BfsSettings<P>, locked_io: &'a LockedIO<P>) -> Self {
+    pub(crate) fn new(settings: &'a BfsSettings<P>, locked_io: &'a LockedIO<P>) -> Self {
         let num_blocks = settings.num_update_blocks;
 
         tracing::debug!("creating {num_blocks} update blocks");
@@ -45,7 +45,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
     }
 
     /// Write filled blocks to disk and put them back in `self.available_blocks`
-    pub fn write_and_put(&self, mut filled_blocks: Vec<FilledUpdateBlock>) {
+    fn write_and_put(&self, mut filled_blocks: Vec<FilledUpdateBlock>) {
         if filled_blocks.is_empty() {
             return;
         }
@@ -165,7 +165,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         }
     }
 
-    pub fn write_all(&self) {
+    pub(crate) fn write_all(&self) {
         let mut filled_blocks_lock = self.filled_blocks.lock();
         let filled_blocks = std::mem::take(&mut *filled_blocks_lock);
         drop(filled_blocks_lock);
@@ -174,7 +174,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
     }
 
     /// Write all blocks that have the given `source_depth` and `source_chunk_idx`
-    pub fn write_from_source(&self, source_depth: usize, source_chunk_idx: usize) {
+    pub(crate) fn write_from_source(&self, source_depth: usize, source_chunk_idx: usize) {
         let mut filled_blocks_lock = self.filled_blocks.lock();
         let filled_blocks = std::mem::take(&mut *filled_blocks_lock);
 
@@ -192,7 +192,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         self.write_and_put(to_write);
     }
 
-    pub fn take(&self) -> AvailableUpdateBlock {
+    pub(crate) fn take(&self) -> AvailableUpdateBlock {
         loop {
             if let Some(block) = self.available_blocks.lock().pop() {
                 return block;
@@ -218,7 +218,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         self.locked_io.write_file(&path, str.as_ref(), false);
     }
 
-    pub fn try_read_sizes_from_disk(&self) {
+    pub(crate) fn try_read_sizes_from_disk(&self) {
         let path = self.settings.update_files_size_file_path();
 
         if !path.exists() {
@@ -232,7 +232,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         *lock = hashmap;
     }
 
-    pub fn put(&self, block: FilledUpdateBlock) {
+    pub(crate) fn put(&self, block: FilledUpdateBlock) {
         self.filled_blocks.lock().push(block);
     }
 
@@ -274,11 +274,11 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         self.write_sizes_to_disk();
     }
 
-    pub fn delete_update_files(&self, depth: usize, chunk_idx: usize) {
+    pub(crate) fn delete_update_files(&self, depth: usize, chunk_idx: usize) {
         self.delete_update_files_impl(depth, chunk_idx, false);
     }
 
-    pub fn delete_used_update_files(&self, depth: usize, chunk_idx: usize) {
+    pub(crate) fn delete_used_update_files(&self, depth: usize, chunk_idx: usize) {
         self.delete_update_files_impl(depth, chunk_idx, true);
     }
 
@@ -320,15 +320,15 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         self.write_sizes_to_disk();
     }
 
-    pub fn delete_update_arrays(&self, depth: usize, chunk_idx: usize) {
+    pub(crate) fn delete_update_arrays(&self, depth: usize, chunk_idx: usize) {
         self.delete_update_arrays_impl(depth, chunk_idx, false);
     }
 
-    pub fn delete_used_update_arrays(&self, depth: usize, chunk_idx: usize) {
+    pub(crate) fn delete_used_update_arrays(&self, depth: usize, chunk_idx: usize) {
         self.delete_update_arrays_impl(depth, chunk_idx, true);
     }
 
-    pub fn back_up_update_arrays(&self, depth: usize, chunk_idx: usize) {
+    pub(crate) fn back_up_update_arrays(&self, depth: usize, chunk_idx: usize) {
         let dir_path = self.settings.update_array_chunk_dir_path(depth, chunk_idx);
         let backup_dir_path = self
             .settings
@@ -338,7 +338,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         std::fs::rename(&dir_path, &backup_dir_path).unwrap();
     }
 
-    pub fn write_update_array(&self, update_buffer: &[u8], depth: usize, chunk_idx: usize) {
+    pub(crate) fn write_update_array(&self, update_buffer: &[u8], depth: usize, chunk_idx: usize) {
         let dir_path = self.settings.update_array_chunk_dir_path(depth, chunk_idx);
         let mut rng = rand::thread_rng();
         let file_name = Alphanumeric.sample_string(&mut rng, 16);
@@ -356,7 +356,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         drop(sizes_lock);
     }
 
-    pub fn files_size(&self, depth: usize, chunk_idx: usize) -> u64 {
+    pub(crate) fn files_size(&self, depth: usize, chunk_idx: usize) -> u64 {
         let read_lock = self.sizes.read();
         read_lock.get(&depth).map_or(0, |sizes| sizes[chunk_idx])
     }
@@ -391,7 +391,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         update_files_size + update_arrays_size
     }
 
-    pub fn mark_filled_and_replace(
+    pub(crate) fn mark_filled_and_replace(
         &self,
         upd: &mut FillableUpdateBlock,
         depth: usize,

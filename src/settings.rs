@@ -10,7 +10,7 @@ pub enum UpdateFilesBehavior {
 }
 
 impl UpdateFilesBehavior {
-    pub fn should_compress(self) -> bool {
+    pub(crate) fn should_compress(self) -> bool {
         matches!(self, Self::CompressAndDelete | Self::CompressAndKeep)
     }
 }
@@ -345,106 +345,110 @@ pub struct BfsSettings<P: BfsSettingsProvider> {
 }
 
 impl<P: BfsSettingsProvider> BfsSettings<P> {
-    pub fn array_bytes(&self) -> usize {
+    fn array_bytes(&self) -> usize {
         self.state_size.div_ceil(8) as usize
     }
 
-    pub fn num_array_chunks(&self) -> usize {
+    pub(crate) fn num_array_chunks(&self) -> usize {
         self.array_bytes() / self.chunk_size_bytes
     }
 
-    pub fn states_per_chunk(&self) -> usize {
+    pub(crate) fn states_per_chunk(&self) -> usize {
         self.chunk_size_bytes * 8
     }
 
-    pub fn update_block_capacity(&self) -> usize {
+    pub(crate) fn update_block_capacity(&self) -> usize {
         self.update_memory / (self.num_update_blocks * std::mem::size_of::<u32>())
     }
 
-    pub fn root_dir(&self, chunk_idx: usize) -> &Path {
+    fn root_dir(&self, chunk_idx: usize) -> &Path {
         let chunk_root_idx = self.settings_provider.chunk_root_idx(chunk_idx);
         &self.root_directories[chunk_root_idx]
     }
 
-    pub fn state_file_path(&self) -> PathBuf {
+    pub(crate) fn state_file_path(&self) -> PathBuf {
         self.root_dir(0).join("state.dat")
     }
 
-    pub fn update_files_size_file_path(&self) -> PathBuf {
+    pub(crate) fn update_files_size_file_path(&self) -> PathBuf {
         self.root_dir(0).join("update-files-size.dat")
     }
 
-    pub fn update_depth_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+    pub(crate) fn update_depth_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.root_dir(chunk_idx)
             .join("update")
             .join(format!("depth-{depth}"))
     }
 
-    pub fn update_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+    pub(crate) fn update_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.update_depth_dir_path(depth, chunk_idx)
             .join(format!("update-chunk-{chunk_idx}"))
     }
 
-    pub fn chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+    pub(crate) fn chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.root_dir(chunk_idx)
             .join("array")
             .join(format!("depth-{depth}"))
     }
 
-    pub fn chunk_file_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+    pub(crate) fn chunk_file_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.chunk_dir_path(depth, chunk_idx)
             .join(format!("chunk-{chunk_idx}.dat"))
     }
 
-    pub fn backup_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+    pub(crate) fn backup_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.root_dir(chunk_idx)
             .join("backup-array")
             .join(format!("depth-{depth}"))
     }
 
-    pub fn backup_chunk_file_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+    pub(crate) fn backup_chunk_file_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.backup_chunk_dir_path(depth, chunk_idx)
             .join(format!("chunk-{chunk_idx}.dat"))
     }
 
-    pub fn update_array_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+    pub(crate) fn update_array_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.root_dir(chunk_idx)
             .join("update-array")
             .join(format!("depth-{depth}"))
     }
 
-    pub fn update_array_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+    pub(crate) fn update_array_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.update_array_dir_path(depth, chunk_idx)
             .join(format!("update-chunk-{chunk_idx}"))
     }
 
-    pub fn backup_update_array_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+    fn backup_update_array_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.root_dir(chunk_idx)
             .join("backup-update-array")
             .join(format!("depth-{depth}"))
     }
 
-    pub fn backup_update_array_chunk_dir_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+    pub(crate) fn backup_update_array_chunk_dir_path(
+        &self,
+        depth: usize,
+        chunk_idx: usize,
+    ) -> PathBuf {
         self.backup_update_array_dir_path(depth, chunk_idx)
             .join(format!("update-chunk-{chunk_idx}"))
     }
 
-    pub fn new_positions_data_dir_path(&self, depth: usize) -> PathBuf {
+    pub(crate) fn new_positions_data_dir_path(&self, depth: usize) -> PathBuf {
         self.root_dir(0)
             .join("new-positions")
             .join(format!("depth-{depth}"))
     }
 
-    pub fn new_positions_data_file_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
+    pub(crate) fn new_positions_data_file_path(&self, depth: usize, chunk_idx: usize) -> PathBuf {
         self.new_positions_data_dir_path(depth)
             .join(format!("chunk-{chunk_idx}.dat"))
     }
 
-    pub fn exhausted_chunk_dir_path(&self) -> PathBuf {
+    pub(crate) fn exhausted_chunk_dir_path(&self) -> PathBuf {
         self.root_dir(0).join("exhausted-chunks")
     }
 
-    pub fn exhausted_chunk_file_path(&self, chunk_idx: usize) -> PathBuf {
+    pub(crate) fn exhausted_chunk_file_path(&self, chunk_idx: usize) -> PathBuf {
         self.exhausted_chunk_dir_path()
             .join(format!("chunk-{chunk_idx}.dat"))
     }
