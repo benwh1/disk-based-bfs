@@ -437,25 +437,25 @@ fn read_to_vec(
 
     tracing::trace!("reading file {path:?}");
 
-    let mut buf = std::fs::read(path).map_err(|err| Error::ReadFile {
+    let mut bytes = std::fs::read(path).map_err(|err| Error::ReadFile {
         path: path.to_owned(),
         err,
     })?;
 
     drop(lock);
 
-    let buf_len = buf.len();
+    let bytes_len = bytes.len();
 
-    if buf_len as u64 != file_len {
+    if bytes_len as u64 != file_len {
         return Err(Error::IncorrectFileLength {
             path: path.to_owned(),
-            expected: buf_len as u64,
+            expected: bytes_len as u64,
             actual: file_len,
         });
     }
 
     let read_hash = if with_hash {
-        let hash_buf: [u8; 8] = buf.split_off(buf_len - 8).try_into().unwrap();
+        let hash_buf: [u8; 8] = bytes.split_off(bytes_len - 8).try_into().unwrap();
         let hash = u64::from_le_bytes(hash_buf);
         Some(hash)
     } else {
@@ -463,7 +463,7 @@ fn read_to_vec(
     };
 
     if compressed {
-        let mut decoder = Decoder::new(Cursor::new(&buf)).unwrap();
+        let mut decoder = Decoder::new(Cursor::new(&bytes)).unwrap();
         let mut decompressed_buf = Vec::new();
         decoder
             .read_to_end(&mut decompressed_buf)
@@ -471,19 +471,23 @@ fn read_to_vec(
                 path: path.to_owned(),
                 err,
             })?;
-        buf = decompressed_buf;
+        bytes = decompressed_buf;
 
-        let decompressed_len = if with_hash { buf.len() + 8 } else { buf.len() };
+        let decompressed_len = if with_hash {
+            bytes.len() + 8
+        } else {
+            bytes.len()
+        };
 
         tracing::trace!(
-            "read {buf_len} bytes ({decompressed_len} bytes uncompressed) from file {path:?}"
+            "read {bytes_len} bytes ({decompressed_len} bytes uncompressed) from file {path:?}"
         );
     } else {
-        tracing::trace!("read {buf_len} bytes from file {path:?}");
+        tracing::trace!("read {bytes_len} bytes from file {path:?}");
     }
 
     if let Some(read_hash) = read_hash {
-        let computed_hash = hash(&[&buf]);
+        let computed_hash = hash(&[&bytes]);
 
         if read_hash != computed_hash {
             return Err(Error::ChecksumMismatch {
@@ -494,7 +498,7 @@ fn read_to_vec(
         }
     }
 
-    Ok(buf)
+    Ok(bytes)
 }
 
 fn read_to_string(
