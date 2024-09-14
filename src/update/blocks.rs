@@ -57,10 +57,6 @@ impl FillableUpdateBlock {
         self.updates.len()
     }
 
-    fn is_empty(&self) -> bool {
-        self.updates.is_empty()
-    }
-
     pub(crate) fn capacity(&self) -> usize {
         self.updates.capacity()
     }

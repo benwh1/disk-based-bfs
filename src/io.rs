@@ -727,12 +727,6 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
             .unwrap();
     }
 
-    fn read_to_string(&self, path: &Path, compressed: bool) -> String {
-        self.try_read_to_string(path, compressed)
-            .inspect_err(|e| panic!("{e}"))
-            .unwrap()
-    }
-
     pub(crate) fn read_to_vec(&self, path: &Path, compressed: bool) -> Vec<u8> {
         self.try_read_to_vec(path, compressed)
             .inspect_err(|e| panic!("{e}"))
