@@ -267,10 +267,8 @@ impl<
             assert_eq!(bytes.len() % 4, 0);
 
             // Group the bytes into groups of 4
-            for chunk_offset in bytes
-                .array_chunks()
-                .map(|&chunk: &[u8; 4]| u32::from_le_bytes(chunk))
-            {
+            let chunk_offsets: &[u32] = bytemuck::cast_slice(&bytes);
+            for &chunk_offset in chunk_offsets {
                 let (byte_idx, bit_idx) = self.chunk_offset_to_bit_coords(chunk_offset);
                 update_buffer[byte_idx] |= 1 << bit_idx;
             }
@@ -559,11 +557,8 @@ impl<
             let bytes = self.locked_io.read_to_vec(&file_path, false);
             assert_eq!(bytes.len() % 4, 0);
 
-            // Group the bytes into groups of 4
-            for chunk_offset in bytes
-                .array_chunks()
-                .map(|&chunk: &[u8; 4]| u32::from_le_bytes(chunk))
-            {
+            let chunk_offsets: &[u32] = bytemuck::cast_slice(&bytes);
+            for &chunk_offset in chunk_offsets {
                 let (byte_idx, bit_idx) = self.chunk_offset_to_bit_coords(chunk_offset);
                 let byte = chunk_buffer[byte_idx];
 

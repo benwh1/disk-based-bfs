@@ -1,4 +1,3 @@
-#![feature(array_chunks)]
 #![feature(buf_read_has_data_left)]
 #![feature(once_cell_get_mut)]
 #![warn(clippy::must_use_candidate)]
