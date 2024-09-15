@@ -1,7 +1,7 @@
-use std::{collections::HashMap, thread::Builder as ThreadBuilder};
+use std::{collections::HashMap, sync::Arc, thread::Builder as ThreadBuilder};
 
 use itertools::Itertools;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Condvar, Mutex, RwLock};
 use rand::distributions::{Alphanumeric, DistString as _};
 
 use crate::{
@@ -17,6 +17,7 @@ pub(crate) struct UpdateManager<'a, P: BfsSettingsProvider + Sync> {
     size_file_lock: Mutex<()>,
     available_blocks: Mutex<Vec<AvailableUpdateBlock>>,
     filled_blocks: Mutex<Vec<FilledUpdateBlock>>,
+    take_condition: Arc<(Mutex<bool>, Condvar)>,
 }
 
 impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
@@ -41,6 +42,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
             size_file_lock: Mutex::new(()),
             available_blocks,
             filled_blocks,
+            take_condition: Arc::new((Mutex::new(false), Condvar::new())),
         }
     }
 
@@ -198,7 +200,23 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
                 return block;
             }
 
-            self.write_all();
+            // If another thread is writing updates so that it can take a block, don't call
+            // `write_all` here because we might end up only writing 1 block (or a small number) to
+            // disk, which is inefficient. Instead, we wait for the other thread to finish writing
+            // and then try again.
+            let (lock, cvar) = &*self.take_condition;
+            let mut is_writing_updates = lock.lock();
+            if !*is_writing_updates {
+                *is_writing_updates = true;
+                drop(is_writing_updates);
+
+                self.write_all();
+
+                *lock.lock() = false;
+                cvar.notify_all();
+            } else {
+                cvar.wait(&mut is_writing_updates);
+            }
         }
     }
 
