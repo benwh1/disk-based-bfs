@@ -10,6 +10,12 @@ use crate::{
     update::blocks::{AvailableUpdateBlock, FillableUpdateBlock, FilledUpdateBlock},
 };
 
+struct BlockCondition {
+    is_writing: Mutex<bool>,
+    is_writing_cvar: Condvar,
+    block_available_cvar: Condvar,
+}
+
 pub(crate) struct UpdateManager<'a, P: BfsSettingsProvider + Sync> {
     settings: &'a BfsSettings<P>,
     locked_io: &'a LockedIO<'a, P>,
@@ -17,7 +23,7 @@ pub(crate) struct UpdateManager<'a, P: BfsSettingsProvider + Sync> {
     size_file_lock: Mutex<()>,
     available_blocks: Mutex<Vec<AvailableUpdateBlock>>,
     filled_blocks: Mutex<Vec<FilledUpdateBlock>>,
-    take_condition: Arc<(Mutex<bool>, Condvar)>,
+    block_condition: Arc<BlockCondition>,
 }
 
 impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
@@ -42,7 +48,11 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
             size_file_lock: Mutex::new(()),
             available_blocks,
             filled_blocks,
-            take_condition: Arc::new((Mutex::new(false), Condvar::new())),
+            block_condition: Arc::new(BlockCondition {
+                is_writing: Mutex::new(false),
+                is_writing_cvar: Condvar::new(),
+                block_available_cvar: Condvar::new(),
+            }),
         }
     }
 
@@ -96,6 +106,9 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
                                     available_blocks_lock.push(block.clear());
                                 }
                                 drop(available_blocks_lock);
+
+                                // Notify any waiting threads that blocks are now available
+                                self.block_condition.block_available_cvar.notify_all();
                             }
                         })
                         .unwrap()
@@ -108,6 +121,11 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         self.write_sizes_to_disk();
 
         tracing::info!("finished writing update blocks");
+
+        // Notify any waiting threads that we're done writing
+        let block_condition = &*self.block_condition;
+        *block_condition.is_writing.lock() = false;
+        block_condition.is_writing_cvar.notify_all();
     }
 
     /// Assumes that all the blocks have the same `depth` and `chunk_idx`
@@ -168,6 +186,14 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
     }
 
     pub(crate) fn write_all(&self) {
+        let block_condition = &*self.block_condition;
+        let mut is_writing_lock = block_condition.is_writing.lock();
+        while *is_writing_lock {
+            block_condition.is_writing_cvar.wait(&mut is_writing_lock);
+        }
+        *is_writing_lock = true;
+        drop(is_writing_lock);
+
         let mut filled_blocks_lock = self.filled_blocks.lock();
         let filled_blocks = std::mem::take(&mut *filled_blocks_lock);
         drop(filled_blocks_lock);
@@ -177,6 +203,14 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
     /// Write all blocks that have the given `source_depth` and `source_chunk_idx`
     pub(crate) fn write_from_source(&self, source_depth: usize, source_chunk_idx: usize) {
+        let block_condition = &*self.block_condition;
+        let mut is_writing_lock = block_condition.is_writing.lock();
+        while *is_writing_lock {
+            block_condition.is_writing_cvar.wait(&mut is_writing_lock);
+        }
+        *is_writing_lock = true;
+        drop(is_writing_lock);
+
         let mut filled_blocks_lock = self.filled_blocks.lock();
         let filled_blocks = std::mem::take(&mut *filled_blocks_lock);
 
@@ -200,22 +234,16 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
                 return block;
             }
 
-            // If another thread is writing updates so that it can take a block, don't call
-            // `write_all` here because we might end up only writing 1 block (or a small number) to
-            // disk, which is inefficient. Instead, we wait for the other thread to finish writing
-            // and then try again.
-            let (lock, cvar) = &*self.take_condition;
-            let mut is_writing_updates = lock.lock();
-            if !*is_writing_updates {
-                *is_writing_updates = true;
-                drop(is_writing_updates);
-
+            // If another thread is writing updates, just wait for a block to become available
+            // instead of trying to write updates ourselves
+            let block_condition = &*self.block_condition;
+            let mut is_writing_lock = block_condition.is_writing.lock();
+            if !*is_writing_lock {
                 self.write_all();
-
-                *lock.lock() = false;
-                cvar.notify_all();
             } else {
-                cvar.wait(&mut is_writing_updates);
+                block_condition
+                    .block_available_cvar
+                    .wait(&mut is_writing_lock);
             }
         }
     }
