@@ -1109,7 +1109,7 @@ impl<
                                         .max_by_key(|&(chunk_idx, _)| {
                                             // Take the one with the largest update file size
                                             self.update_file_manager
-                                                .files_size(depth + 2, chunk_idx);
+                                                .files_size(depth + 2, chunk_idx)
                                         })
                                         .map(|(chunk_idx, _)| chunk_idx)
                                 });
