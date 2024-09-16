@@ -1089,7 +1089,7 @@ impl<
                                     fs4::available_space(path).ok().map(|s| (root_idx, s))
                                 })
                                 .filter(|&(_, space)| {
-                                    space > self.settings.available_disk_space_limit
+                                    space < self.settings.available_disk_space_limit
                                 })
                                 .min_by_key(|&(_, space)| space)
                                 .and_then(|(root_idx, _)| {
