@@ -1075,32 +1075,41 @@ impl<
                             drop(chunk_states_read);
 
                             // Check for update files to compress
-                            let update_file_states_read = update_file_states.read();
-                            let chunk_idx = update_file_states_read.iter().enumerate().find_map(
-                                |(i, state)| {
-                                    if *state == UpdateFileState::CurrentlyCompressing {
-                                        return None;
-                                    }
 
-                                    let path = self.settings.update_chunk_dir_path(depth + 2, i);
+                            // Find the root directory with the least available space
+                            let root_idx = self
+                                .settings
+                                .root_directories
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(i, path)| {
+                                    fs4::available_space(path).ok().map(|s| (i, s))
+                                })
+                                .filter(|&(_, space)| {
+                                    space > self.settings.available_disk_space_limit
+                                })
+                                .min_by_key(|&(_, space)| space)
+                                .map(|(i, _)| i)
+                                .unwrap();
 
-                                    if !path.exists() {
-                                        return None;
-                                    }
-
-                                    let used_space =
-                                        self.update_file_manager.files_size(depth + 2, i);
-
-                                    if used_space
-                                        <= self.settings.update_files_compression_threshold
-                                    {
-                                        return None;
-                                    }
-
-                                    Some(i)
-                                },
-                            );
-                            drop(update_file_states_read);
+                            // Find the chunk with the largest update file size
+                            let chunk_idx = update_file_states
+                                .read()
+                                .iter()
+                                .enumerate()
+                                .filter(|&(chunk_idx, &state)| {
+                                    self.settings.settings_provider.chunk_root_idx(chunk_idx)
+                                        == root_idx
+                                        && state == UpdateFileState::NotCompressing
+                                        && self
+                                            .settings
+                                            .update_chunk_dir_path(depth + 2, chunk_idx)
+                                            .exists()
+                                })
+                                .max_by_key(|&(chunk_idx, _)| {
+                                    self.update_file_manager.files_size(depth + 2, chunk_idx);
+                                })
+                                .map(|(chunk_idx, _)| chunk_idx);
 
                             if let Some(chunk_idx) = chunk_idx {
                                 // Set the state to currently compressing

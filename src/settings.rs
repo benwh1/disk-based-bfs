@@ -53,8 +53,8 @@ pub enum BfsSettingsError {
     #[error("`initial_memory_limit` not set")]
     InitialMemoryLimitNotSet,
 
-    #[error("`update_files_compression_threshold` not set")]
-    UpdateFilesCompressionThresholdNotSet,
+    #[error("`available_disk_space_limit` not set")]
+    AvailableDiskSpaceLimitNotSet,
 
     #[error("`update_array_threshold` not set")]
     UpdateArrayThresholdNotSet,
@@ -87,15 +87,6 @@ pub enum BfsSettingsError {
     },
 
     #[error(
-        "Update files compression threshold ({update_files_compression_threshold}) must be \
-        greater than chunk size ({chunk_size_bytes})"
-    )]
-    UpdateCompressionThresholdTooSmall {
-        update_files_compression_threshold: u64,
-        chunk_size_bytes: usize,
-    },
-
-    #[error(
         "Number of update blocks ({num_update_blocks}) must be greater than threads * num chunks \
         ({})",
         threads * num_chunks,
@@ -118,7 +109,7 @@ pub struct BfsSettingsBuilder<P: BfsSettingsProvider> {
     state_size: Option<u64>,
     root_directories: Option<Vec<PathBuf>>,
     initial_memory_limit: Option<usize>,
-    update_files_compression_threshold: Option<u64>,
+    available_disk_space_limit: Option<u64>,
     update_array_threshold: Option<u64>,
     use_locked_io: Option<bool>,
     sync_filesystem: Option<bool>,
@@ -146,7 +137,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             state_size: None,
             root_directories: None,
             initial_memory_limit: None,
-            update_files_compression_threshold: None,
+            available_disk_space_limit: None,
             update_array_threshold: None,
             use_locked_io: None,
             sync_filesystem: None,
@@ -211,11 +202,8 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
     }
 
     #[must_use]
-    pub fn update_files_compression_threshold(
-        mut self,
-        update_files_compression_threshold: u64,
-    ) -> Self {
-        self.update_files_compression_threshold = Some(update_files_compression_threshold);
+    pub fn available_disk_space_limit(mut self, available_disk_space_limit: u64) -> Self {
+        self.available_disk_space_limit = Some(available_disk_space_limit);
         self
     }
 
@@ -273,19 +261,6 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             });
         }
 
-        let update_files_compression_threshold = self
-            .update_files_compression_threshold
-            .ok_or(BfsSettingsError::UpdateFilesCompressionThresholdNotSet)?;
-        if chunk_size_bytes as u64 >= update_files_compression_threshold {
-            // If this is the case then we would get stuck in an infinite loop when compressing
-            // update files, because the total file size after compressing would still be greater
-            // than the threshold.
-            return Err(BfsSettingsError::UpdateCompressionThresholdTooSmall {
-                update_files_compression_threshold,
-                chunk_size_bytes,
-            });
-        }
-
         // Each thread can hold one update vec per chunk, so we need more than (threads * chunks)
         // update vecs in total
         let num_update_blocks = self
@@ -320,7 +295,9 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             initial_memory_limit: self
                 .initial_memory_limit
                 .ok_or(BfsSettingsError::InitialMemoryLimitNotSet)?,
-            update_files_compression_threshold,
+            available_disk_space_limit: self
+                .available_disk_space_limit
+                .ok_or(BfsSettingsError::AvailableDiskSpaceLimitNotSet)?,
             update_array_threshold: self
                 .update_array_threshold
                 .ok_or(BfsSettingsError::UpdateArrayThresholdNotSet)?,
@@ -354,7 +331,7 @@ pub struct BfsSettings<P: BfsSettingsProvider> {
     pub(crate) state_size: u64,
     pub(crate) root_directories: Vec<PathBuf>,
     pub(crate) initial_memory_limit: usize,
-    pub(crate) update_files_compression_threshold: u64,
+    pub(crate) available_disk_space_limit: u64,
     pub(crate) update_array_threshold: u64,
     pub(crate) use_locked_io: bool,
     pub(crate) sync_filesystem: bool,
