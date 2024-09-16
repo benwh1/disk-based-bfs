@@ -1076,40 +1076,43 @@ impl<
 
                             // Check for update files to compress
 
-                            // Find the root directory with the least available space
-                            let root_idx = self
+                            // Find the root directory with the least available space, and then
+                            // find the chunk with the largest update file size on that disk
+                            let chunk_idx = self
                                 .settings
                                 .root_directories
                                 .iter()
                                 .enumerate()
-                                .filter_map(|(i, path)| {
-                                    fs4::available_space(path).ok().map(|s| (i, s))
+                                .filter_map(|(root_idx, path)| {
+                                    // Get the available space on each disk, ignoring any disks
+                                    // that give errors
+                                    fs4::available_space(path).ok().map(|s| (root_idx, s))
                                 })
                                 .filter(|&(_, space)| {
                                     space > self.settings.available_disk_space_limit
                                 })
                                 .min_by_key(|&(_, space)| space)
-                                .map(|(i, _)| i)
-                                .unwrap();
-
-                            // Find the chunk with the largest update file size
-                            let chunk_idx = update_file_states
-                                .read()
-                                .iter()
-                                .enumerate()
-                                .filter(|&(chunk_idx, &state)| {
-                                    self.settings.settings_provider.chunk_root_idx(chunk_idx)
-                                        == root_idx
-                                        && state == UpdateFileState::NotCompressing
-                                        && self
-                                            .settings
-                                            .update_chunk_dir_path(depth + 2, chunk_idx)
-                                            .exists()
-                                })
-                                .max_by_key(|&(chunk_idx, _)| {
-                                    self.update_file_manager.files_size(depth + 2, chunk_idx);
-                                })
-                                .map(|(chunk_idx, _)| chunk_idx);
+                                .and_then(|(root_idx, _)| {
+                                    update_file_states
+                                        .read()
+                                        .iter()
+                                        .enumerate()
+                                        .filter(|&(chunk_idx, &state)| {
+                                            // Filter out chunks that are not in `root_idx`, or are
+                                            // currently being compressed by another thread.
+                                            self.settings
+                                                .settings_provider
+                                                .chunk_root_idx(chunk_idx)
+                                                == root_idx
+                                                && state == UpdateFileState::NotCompressing
+                                        })
+                                        .max_by_key(|&(chunk_idx, _)| {
+                                            // Take the one with the largest update file size
+                                            self.update_file_manager
+                                                .files_size(depth + 2, chunk_idx);
+                                        })
+                                        .map(|(chunk_idx, _)| chunk_idx)
+                                });
 
                             if let Some(chunk_idx) = chunk_idx {
                                 // Set the state to currently compressing
