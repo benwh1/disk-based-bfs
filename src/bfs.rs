@@ -623,42 +623,32 @@ impl<
             assert_eq!(update_array_bytes.len(), self.settings.chunk_size_bytes);
 
             for (byte_idx, &update_byte) in update_array_bytes.iter().enumerate() {
-                if update_byte == 0 {
-                    continue;
-                }
+                let mut diff = update_byte & !chunk_buffer[byte_idx];
 
-                let chunk_byte = chunk_buffer[byte_idx];
+                while diff != 0 {
+                    new_positions += 1;
 
-                if chunk_byte == 0b11111111 {
-                    continue;
-                }
+                    // Index of the least significant set bit
+                    let bit_idx = diff.trailing_zeros() as usize;
 
-                for bit_idx in 0..8 {
-                    if (update_byte >> bit_idx) & 1 == 1 && (chunk_byte >> bit_idx) & 1 == 0 {
-                        new_positions += 1;
+                    let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
+                    callback.new_state(depth + 1, encoded);
 
-                        let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
-                        callback.new_state(depth + 1, encoded);
+                    expander(encoded, &mut expanded_nodes);
 
-                        if new_positions % self.settings.capacity_check_frequency as u64 == 0 {
-                            self.check_update_vec_capacity(updates, depth + 2);
-                        }
-
-                        // Expand the node
-                        let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
-                        expander(encoded, &mut expanded_nodes);
-
-                        for node in expanded_nodes {
-                            let (idx, offset) = self.node_to_chunk_coords(node);
-                            updates[idx]
-                                .get_mut_or_init(|| {
-                                    self.update_file_manager
-                                        .take()
-                                        .into_fillable(depth + 1, chunk_idx)
-                                })
-                                .push(offset);
-                        }
+                    for node in expanded_nodes {
+                        let (idx, offset) = self.node_to_chunk_coords(node);
+                        updates[idx]
+                            .get_mut_or_init(|| {
+                                self.update_file_manager
+                                    .take()
+                                    .into_fillable(depth + 1, chunk_idx)
+                            })
+                            .push(offset);
                     }
+
+                    // Clear the least significant set bit
+                    diff &= diff - 1;
                 }
 
                 chunk_buffer[byte_idx] |= update_byte;
