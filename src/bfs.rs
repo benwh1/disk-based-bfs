@@ -634,6 +634,10 @@ impl<
                     let encoded = self.bit_coords_to_node(chunk_idx, byte_idx, bit_idx);
                     callback.new_state(depth + 1, encoded);
 
+                    if new_positions % self.settings.capacity_check_frequency as u64 == 0 {
+                        self.check_update_vec_capacity(updates, depth + 2);
+                    }
+
                     expander(encoded, &mut expanded_nodes);
 
                     for node in expanded_nodes {
