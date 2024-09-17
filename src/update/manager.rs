@@ -191,11 +191,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         *is_writing_lock = true;
         drop(is_writing_lock);
 
-        let mut filled_blocks_lock = self.filled_blocks.lock();
-        let filled_blocks = std::mem::take(&mut *filled_blocks_lock);
-        drop(filled_blocks_lock);
-
-        self.write_and_put(filled_blocks);
+        self.write_all_unsync();
 
         // Notify any waiting threads that we're done writing
         let block_condition = &*self.block_condition;
@@ -203,28 +199,14 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         block_condition.is_writing_cvar.notify_all();
     }
 
-    // Returns true if the write was successful, false if we were blocked by another thread
-    fn write_all_if_not_blocked(&self) -> bool {
-        let block_condition = &*self.block_condition;
-        let mut is_writing_lock = block_condition.is_writing.lock();
-        if *is_writing_lock {
-            return false;
-        }
-        *is_writing_lock = true;
-        drop(is_writing_lock);
-
+    /// Must not be called unless we have just set `self.block_condition.is_writing` to `true`.
+    /// We must also reset it to `false` after calling this function.
+    fn write_all_unsync(&self) {
         let mut filled_blocks_lock = self.filled_blocks.lock();
         let filled_blocks = std::mem::take(&mut *filled_blocks_lock);
         drop(filled_blocks_lock);
 
         self.write_and_put(filled_blocks);
-
-        // Notify any waiting threads that we're done writing
-        let block_condition = &*self.block_condition;
-        *block_condition.is_writing.lock() = false;
-        block_condition.is_writing_cvar.notify_all();
-
-        true
     }
 
     /// Write all blocks that have the given `source_depth` and `source_chunk_idx`
@@ -265,15 +247,24 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
                 return block;
             }
 
-            // If another thread is writing updates, just wait for a block to become available
-            // instead of trying to write updates ourselves
-            if !self.write_all_if_not_blocked() {
-                let block_condition = &*self.block_condition;
-                let mut is_writing_lock = block_condition.is_writing.lock();
-
+            let block_condition = &*self.block_condition;
+            let mut is_writing_lock = block_condition.is_writing.lock();
+            if *is_writing_lock {
+                // Another thread is writing updates, so wait for a block to become available
                 block_condition
                     .block_available_cvar
                     .wait(&mut is_writing_lock);
+            } else {
+                // No other threads are writing, so we can write the updates ourselves
+                *is_writing_lock = true;
+                drop(is_writing_lock);
+
+                self.write_all_unsync();
+
+                // Notify any waiting threads that we're done writing
+                let block_condition = &*self.block_condition;
+                *block_condition.is_writing.lock() = false;
+                block_condition.is_writing_cvar.notify_all();
             }
         }
     }
