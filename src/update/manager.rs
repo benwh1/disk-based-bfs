@@ -246,6 +246,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
             let block_condition = &*self.block_condition;
             let mut is_writing_lock = block_condition.is_writing.lock();
             if !*is_writing_lock {
+                drop(is_writing_lock);
                 self.write_all();
             } else {
                 block_condition
