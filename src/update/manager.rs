@@ -203,6 +203,30 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         block_condition.is_writing_cvar.notify_all();
     }
 
+    // Returns true if the write was successful, false if we were blocked by another thread
+    fn write_all_if_not_blocked(&self) -> bool {
+        let block_condition = &*self.block_condition;
+        let mut is_writing_lock = block_condition.is_writing.lock();
+        if *is_writing_lock {
+            return false;
+        }
+        *is_writing_lock = true;
+        drop(is_writing_lock);
+
+        let mut filled_blocks_lock = self.filled_blocks.lock();
+        let filled_blocks = std::mem::take(&mut *filled_blocks_lock);
+        drop(filled_blocks_lock);
+
+        self.write_and_put(filled_blocks);
+
+        // Notify any waiting threads that we're done writing
+        let block_condition = &*self.block_condition;
+        *block_condition.is_writing.lock() = false;
+        block_condition.is_writing_cvar.notify_all();
+
+        true
+    }
+
     /// Write all blocks that have the given `source_depth` and `source_chunk_idx`
     pub(crate) fn write_from_source(&self, source_depth: usize, source_chunk_idx: usize) {
         let block_condition = &*self.block_condition;
@@ -243,12 +267,10 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
             // If another thread is writing updates, just wait for a block to become available
             // instead of trying to write updates ourselves
-            let block_condition = &*self.block_condition;
-            let mut is_writing_lock = block_condition.is_writing.lock();
-            if !*is_writing_lock {
-                drop(is_writing_lock);
-                self.write_all();
-            } else {
+            if !self.write_all_if_not_blocked() {
+                let block_condition = &*self.block_condition;
+                let mut is_writing_lock = block_condition.is_writing.lock();
+
                 block_condition
                     .block_available_cvar
                     .wait(&mut is_writing_lock);
