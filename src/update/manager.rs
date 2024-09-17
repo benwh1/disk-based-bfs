@@ -16,6 +16,8 @@ struct BlockCondition {
     block_available_cvar: Condvar,
 }
 
+// Any internal function that pulls blocks out of `self.filled_blocks` for writing MUST block other
+// threads from doing the same.
 pub(crate) struct UpdateManager<'a, P: BfsSettingsProvider + Sync> {
     settings: &'a BfsSettings<P>,
     locked_io: &'a LockedIO<'a, P>,
@@ -121,11 +123,6 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         self.write_sizes_to_disk();
 
         tracing::info!("finished writing update blocks");
-
-        // Notify any waiting threads that we're done writing
-        let block_condition = &*self.block_condition;
-        *block_condition.is_writing.lock() = false;
-        block_condition.is_writing_cvar.notify_all();
     }
 
     /// Assumes that all the blocks have the same `depth` and `chunk_idx`
@@ -199,6 +196,11 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         drop(filled_blocks_lock);
 
         self.write_and_put(filled_blocks);
+
+        // Notify any waiting threads that we're done writing
+        let block_condition = &*self.block_condition;
+        *block_condition.is_writing.lock() = false;
+        block_condition.is_writing_cvar.notify_all();
     }
 
     /// Write all blocks that have the given `source_depth` and `source_chunk_idx`
@@ -226,6 +228,11 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         drop(filled_blocks_lock);
 
         self.write_and_put(to_write);
+
+        // Notify any waiting threads that we're done writing
+        let block_condition = &*self.block_condition;
+        *block_condition.is_writing.lock() = false;
+        block_condition.is_writing_cvar.notify_all();
     }
 
     pub(crate) fn take(&self) -> AvailableUpdateBlock {
