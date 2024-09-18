@@ -508,6 +508,15 @@ impl<
         self.update_file_manager
             .write_from_source(depth + 1, chunk_idx);
 
+        // At this point, it's possible that another thread could be in the middle of a call to
+        // `write_all`, and be holding some update blocks sourced from this chunk. We need to wait
+        // for those updates to be written to disk before it's safe to return from this function
+        // and delete the chunk and update files.
+        //
+        // Only one thread can call `write_all` at a time, so we just need to wait for a
+        // notification from the condition variable.
+        self.update_file_manager.wait_for_write_all();
+
         new_positions
     }
 

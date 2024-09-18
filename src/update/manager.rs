@@ -11,13 +11,15 @@ use crate::{
 };
 
 struct BlockCondition {
-    is_writing: Mutex<bool>,
-    is_writing_cvar: Condvar,
+    is_writing_all: Mutex<bool>,
+    is_writing_all_cvar: Condvar,
+    /// To be used when we want to wait for `is_writing_all` to be `false`, but don't want to set
+    /// it back to true. We use this so that threads that are waiting for `is_writing_all` can be
+    /// woken up before threads that may set `is_writing_all` back to `true`.
+    is_writing_all_priority_cvar: Condvar,
     block_available_cvar: Condvar,
 }
 
-// Any internal function that pulls blocks out of `self.filled_blocks` for writing MUST block other
-// threads from doing the same.
 pub(crate) struct UpdateManager<'a, P: BfsSettingsProvider + Sync> {
     settings: &'a BfsSettings<P>,
     locked_io: &'a LockedIO<'a, P>,
@@ -51,8 +53,9 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
             available_blocks,
             filled_blocks,
             block_condition: Arc::new(BlockCondition {
-                is_writing: Mutex::new(false),
-                is_writing_cvar: Condvar::new(),
+                is_writing_all: Mutex::new(false),
+                is_writing_all_cvar: Condvar::new(),
+                is_writing_all_priority_cvar: Condvar::new(),
                 block_available_cvar: Condvar::new(),
             }),
         }
@@ -184,22 +187,28 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
     pub(crate) fn write_all(&self) {
         let block_condition = &*self.block_condition;
-        let mut is_writing_lock = block_condition.is_writing.lock();
-        while *is_writing_lock {
-            block_condition.is_writing_cvar.wait(&mut is_writing_lock);
+        let mut is_writing_all_lock = block_condition.is_writing_all.lock();
+        while *is_writing_all_lock {
+            block_condition
+                .is_writing_all_cvar
+                .wait(&mut is_writing_all_lock);
         }
-        *is_writing_lock = true;
-        drop(is_writing_lock);
+        *is_writing_all_lock = true;
+        drop(is_writing_all_lock);
 
         self.write_all_unsync();
 
         // Notify any waiting threads that we're done writing
         let block_condition = &*self.block_condition;
-        *block_condition.is_writing.lock() = false;
-        block_condition.is_writing_cvar.notify_all();
+        *block_condition.is_writing_all.lock() = false;
+        block_condition.is_writing_all_priority_cvar.notify_all();
+
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        block_condition.is_writing_all_cvar.notify_all();
     }
 
-    /// Must not be called unless we have just set `self.block_condition.is_writing` to `true`.
+    /// Must not be called unless we have just set `self.block_condition.is_writing_all` to `true`.
     /// We must also reset it to `false` after calling this function.
     fn write_all_unsync(&self) {
         let mut filled_blocks_lock = self.filled_blocks.lock();
@@ -211,14 +220,6 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
     /// Write all blocks that have the given `source_depth` and `source_chunk_idx`
     pub(crate) fn write_from_source(&self, source_depth: usize, source_chunk_idx: usize) {
-        let block_condition = &*self.block_condition;
-        let mut is_writing_lock = block_condition.is_writing.lock();
-        while *is_writing_lock {
-            block_condition.is_writing_cvar.wait(&mut is_writing_lock);
-        }
-        *is_writing_lock = true;
-        drop(is_writing_lock);
-
         let mut filled_blocks_lock = self.filled_blocks.lock();
         let filled_blocks = std::mem::take(&mut *filled_blocks_lock);
 
@@ -234,11 +235,6 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         drop(filled_blocks_lock);
 
         self.write_and_put(to_write);
-
-        // Notify any waiting threads that we're done writing
-        let block_condition = &*self.block_condition;
-        *block_condition.is_writing.lock() = false;
-        block_condition.is_writing_cvar.notify_all();
     }
 
     pub(crate) fn take(&self) -> AvailableUpdateBlock {
@@ -248,23 +244,23 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
             }
 
             let block_condition = &*self.block_condition;
-            let mut is_writing_lock = block_condition.is_writing.lock();
-            if *is_writing_lock {
+            let mut is_writing_all_lock = block_condition.is_writing_all.lock();
+            if *is_writing_all_lock {
                 // Another thread is writing updates, so wait for a block to become available
                 block_condition
                     .block_available_cvar
-                    .wait(&mut is_writing_lock);
+                    .wait(&mut is_writing_all_lock);
             } else {
                 // No other threads are writing, so we can write the updates ourselves
-                *is_writing_lock = true;
-                drop(is_writing_lock);
+                *is_writing_all_lock = true;
+                drop(is_writing_all_lock);
 
                 self.write_all_unsync();
 
                 // Notify any waiting threads that we're done writing
                 let block_condition = &*self.block_condition;
-                *block_condition.is_writing.lock() = false;
-                block_condition.is_writing_cvar.notify_all();
+                *block_condition.is_writing_all.lock() = false;
+                block_condition.is_writing_all_cvar.notify_all();
             }
         }
     }
@@ -469,5 +465,15 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
             .into_fillable(upd.source_depth(), upd.source_chunk_idx());
         let old = std::mem::replace(upd, new).into_filled(depth, chunk_idx);
         self.put(old);
+    }
+
+    pub(crate) fn wait_for_write_all(&self) {
+        let block_condition = &*self.block_condition;
+        let mut is_writing_all_lock = block_condition.is_writing_all.lock();
+        while *is_writing_all_lock {
+            block_condition
+                .is_writing_all_priority_cvar
+                .wait(&mut is_writing_all_lock);
+        }
     }
 }
