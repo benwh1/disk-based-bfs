@@ -260,6 +260,10 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
                 // Notify any waiting threads that we're done writing
                 let block_condition = &*self.block_condition;
                 *block_condition.is_writing_all.lock() = false;
+                block_condition.is_writing_all_priority_cvar.notify_all();
+
+                std::thread::sleep(std::time::Duration::from_secs(1));
+
                 block_condition.is_writing_all_cvar.notify_all();
             }
         }
