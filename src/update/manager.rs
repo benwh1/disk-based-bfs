@@ -196,6 +196,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
     }
 
     pub(crate) fn write_all(&self) {
+        tracing::debug!("waiting for `is_writing_all` to be false");
         let block_condition = &*self.block_condition;
         let mut is_writing_all_lock = block_condition.is_writing_all.lock();
         while *is_writing_all_lock {
@@ -205,15 +206,18 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         }
         *is_writing_all_lock = true;
         drop(is_writing_all_lock);
+        tracing::debug!("finished waiting");
 
         self.write_all_unsync();
 
         // Notify priority threads that we're done writing
+        tracing::debug!("notifying priority threads");
         let block_condition = &*self.block_condition;
         *block_condition.is_writing_all.lock() = false;
-        block_condition.is_writing_all_priority_cvar.notify_all();
+        let threads = block_condition.is_writing_all_priority_cvar.notify_all();
 
         // Wait until all priority threads have woken up
+        tracing::debug!("waiting for {threads} priority threads to wake up");
         let mut lock = block_condition.priority_waiting_count.lock();
         while *lock > 0 {
             block_condition.priority_finished_cvar.wait(&mut lock);
@@ -221,7 +225,9 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         drop(lock);
 
         // Notify non-priority threads that we're done writing
-        block_condition.is_writing_all_cvar.notify_all();
+        tracing::debug!("notifying non-priority threads");
+        let threads = block_condition.is_writing_all_cvar.notify_all();
+        tracing::debug!("notified {threads} non-priority threads");
     }
 
     /// Must not be called unless we have just set `self.block_condition.is_writing_all` to `true`.
@@ -494,6 +500,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
     }
 
     pub(crate) fn wait_for_write_all(&self) {
+        tracing::debug!("waiting for `is_writing_all` to be false");
         let block_condition = &*self.block_condition;
         let mut is_writing_all_lock = block_condition.is_writing_all.lock();
         while *is_writing_all_lock {
@@ -512,5 +519,6 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
                 block_condition.priority_finished_cvar.notify_all();
             }
         }
+        tracing::debug!("finished waiting");
     }
 }
