@@ -1083,43 +1083,63 @@ impl<
 
                             // Check for update files to compress
 
-                            // Find the root directory with the least available space, and then
-                            // find the chunk with the largest update file size on that disk
-                            let chunk_idx = self
+                            // Amount of space remaining on each disk
+                            let mut available_space = self
                                 .settings
                                 .root_directories
                                 .iter()
+                                .map(|path| fs4::available_space(path).unwrap_or(u64::MAX))
+                                .collect::<Vec<_>>();
+
+                            // Which chunk has the greatest update file size, and is not currently
+                            // being compressed
+                            let mut largest_not_compressed_per_drive =
+                                vec![None; self.settings.root_directories.len()];
+
+                            let updates_size = self.update_file_manager.all_files_size(depth + 2);
+
+                            // Calculate how much space would be available after all the currently
+                            // running update compressions are complete, and find the chunks with
+                            // the largest update file size that is not currently being compressed
+                            // on each drive
+                            for (chunk_idx, (&state, &size)) in update_file_states
+                                .read()
+                                .iter()
+                                .zip(updates_size.iter())
                                 .enumerate()
-                                .filter_map(|(root_idx, path)| {
-                                    // Get the available space on each disk, ignoring any disks
-                                    // that give errors
-                                    fs4::available_space(path).ok().map(|s| (root_idx, s))
-                                })
-                                .filter(|&(_, space)| {
+                            {
+                                let chunk_root_idx =
+                                    self.settings.settings_provider.chunk_root_idx(chunk_idx);
+                                if state == UpdateFileState::CurrentlyCompressing {
+                                    let a = available_space[chunk_root_idx];
+                                    available_space[chunk_root_idx] = a.saturating_add(size);
+                                } else if size
+                                    > largest_not_compressed_per_drive[chunk_root_idx]
+                                        .map(|(_, size)| size)
+                                        .unwrap_or(0)
+                                {
+                                    largest_not_compressed_per_drive[chunk_root_idx] =
+                                        Some((chunk_idx, size));
+                                }
+                            }
+
+                            // Choose the disk with the least available space, after the current
+                            // update compressions
+                            let disk_to_use = available_space
+                                .iter()
+                                .enumerate()
+                                .min_by_key(|&(_, &space)| space)
+                                .filter(|&(_, &space)| {
                                     space < self.settings.available_disk_space_limit
                                 })
-                                .min_by_key(|&(_, space)| space)
-                                .and_then(|(root_idx, _)| {
-                                    update_file_states
-                                        .read()
-                                        .iter()
-                                        .enumerate()
-                                        .filter(|&(chunk_idx, &state)| {
-                                            // Filter out chunks that are not in `root_idx`, or are
-                                            // currently being compressed by another thread.
-                                            self.settings
-                                                .settings_provider
-                                                .chunk_root_idx(chunk_idx)
-                                                == root_idx
-                                                && state == UpdateFileState::NotCompressing
-                                        })
-                                        .max_by_key(|&(chunk_idx, _)| {
-                                            // Take the one with the largest update file size
-                                            self.update_file_manager
-                                                .files_size(depth + 2, chunk_idx)
-                                        })
-                                        .map(|(chunk_idx, _)| chunk_idx)
-                                });
+                                .map(|(i, _)| i);
+
+                            // Choose the chunk with the largest update file size on the disk that
+                            // is not currently being compressed
+                            let chunk_idx = disk_to_use.and_then(|root_idx| {
+                                largest_not_compressed_per_drive[root_idx]
+                                    .map(|(chunk_idx, _)| chunk_idx)
+                            });
 
                             if let Some(chunk_idx) = chunk_idx {
                                 // Set the state to currently compressing

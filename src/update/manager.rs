@@ -451,6 +451,14 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         drop(sizes_lock);
     }
 
+    pub(crate) fn all_files_size(&self, depth: usize) -> Vec<u64> {
+        self.sizes
+            .read()
+            .get(&depth)
+            .cloned()
+            .unwrap_or_else(|| vec![0; self.settings.num_array_chunks()])
+    }
+
     pub(crate) fn files_size(&self, depth: usize, chunk_idx: usize) -> u64 {
         let read_lock = self.sizes.read();
         read_lock.get(&depth).map_or(0, |sizes| sizes[chunk_idx])
