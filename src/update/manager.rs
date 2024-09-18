@@ -13,10 +13,18 @@ use crate::{
 struct BlockCondition {
     is_writing_all: Mutex<bool>,
     is_writing_all_cvar: Condvar,
+
     /// To be used when we want to wait for `is_writing_all` to be `false`, but don't want to set
     /// it back to true. We use this so that threads that are waiting for `is_writing_all` can be
     /// woken up before threads that may set `is_writing_all` back to `true`.
     is_writing_all_priority_cvar: Condvar,
+
+    /// Number of threads currently blocked on `is_writing_all_priority_cvar`.
+    priority_waiting_count: Mutex<u32>,
+
+    /// Should be notified whenever `priority_waiting_count` is reduced to 0.
+    priority_finished_cvar: Condvar,
+
     block_available_cvar: Condvar,
 }
 
@@ -56,6 +64,8 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
                 is_writing_all: Mutex::new(false),
                 is_writing_all_cvar: Condvar::new(),
                 is_writing_all_priority_cvar: Condvar::new(),
+                priority_waiting_count: Mutex::new(0),
+                priority_finished_cvar: Condvar::new(),
                 block_available_cvar: Condvar::new(),
             }),
         }
@@ -198,13 +208,19 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
         self.write_all_unsync();
 
-        // Notify any waiting threads that we're done writing
+        // Notify priority threads that we're done writing
         let block_condition = &*self.block_condition;
         *block_condition.is_writing_all.lock() = false;
         block_condition.is_writing_all_priority_cvar.notify_all();
 
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        // Wait until all priority threads have woken up
+        let mut lock = block_condition.priority_waiting_count.lock();
+        while *lock > 0 {
+            block_condition.priority_finished_cvar.wait(&mut lock);
+        }
+        drop(lock);
 
+        // Notify non-priority threads that we're done writing
         block_condition.is_writing_all_cvar.notify_all();
     }
 
@@ -257,13 +273,19 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
                 self.write_all_unsync();
 
-                // Notify any waiting threads that we're done writing
+                // Notify priority threads that we're done writing
                 let block_condition = &*self.block_condition;
                 *block_condition.is_writing_all.lock() = false;
                 block_condition.is_writing_all_priority_cvar.notify_all();
 
-                std::thread::sleep(std::time::Duration::from_secs(1));
+                // Wait until all priority threads have woken up
+                let mut lock = block_condition.priority_waiting_count.lock();
+                while *lock > 0 {
+                    block_condition.priority_finished_cvar.wait(&mut lock);
+                }
+                drop(lock);
 
+                // Notify non-priority threads that we're done writing
                 block_condition.is_writing_all_cvar.notify_all();
             }
         }
@@ -475,9 +497,20 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
         let block_condition = &*self.block_condition;
         let mut is_writing_all_lock = block_condition.is_writing_all.lock();
         while *is_writing_all_lock {
+            *block_condition.priority_waiting_count.lock() += 1;
+
             block_condition
                 .is_writing_all_priority_cvar
                 .wait(&mut is_writing_all_lock);
+
+            let mut lock = block_condition.priority_waiting_count.lock();
+            *lock -= 1;
+            let priority_count = *lock;
+            drop(lock);
+
+            if priority_count == 0 {
+                block_condition.priority_finished_cvar.notify_all();
+            }
         }
     }
 }
