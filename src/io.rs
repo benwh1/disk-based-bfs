@@ -613,10 +613,6 @@ impl<'a, P: BfsSettingsProvider> LockedDisk<'a, P> {
         )
     }
 
-    fn try_write_file(&self, path: &Path, data: &[u8], compressed: bool) -> Result<u64, Error> {
-        self.try_write_file_multiple_buffers(path, &[data], compressed)
-    }
-
     fn try_write_file_multiple_buffers(
         &self,
         path: &Path,
@@ -636,10 +632,6 @@ impl<'a, P: BfsSettingsProvider> LockedDisk<'a, P> {
             self.settings.compute_checksums,
             compressed,
         )
-    }
-
-    fn try_delete_file(&self, path: &Path) -> Result<u64, Error> {
-        self.try_delete_files(&[path])
     }
 
     fn try_delete_files(&self, paths: &[&Path]) -> Result<u64, Error> {
@@ -723,17 +715,7 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
     }
 
     fn try_write_file(&self, path: &Path, data: &[u8], compressed: bool) -> Result<u64, Error> {
-        for disk in &self.disks {
-            let result = disk.try_write_file(path, data, compressed);
-            match result {
-                Err(Error::FileNotOnDisk { .. }) => continue,
-                _ => return result,
-            }
-        }
-
-        Err(Error::FileNotOnAnyDisk {
-            path: path.to_owned(),
-        })
+        self.try_write_file_multiple_buffers(path, &[data], compressed)
     }
 
     fn try_write_file_multiple_buffers(
@@ -756,17 +738,7 @@ impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
     }
 
     pub(crate) fn try_delete_file(&self, path: &Path) -> Result<u64, Error> {
-        for disk in &self.disks {
-            let result = disk.try_delete_file(path);
-            match result {
-                Err(Error::FileNotOnDisk { .. }) => continue,
-                _ => return result,
-            }
-        }
-
-        Err(Error::FileNotOnAnyDisk {
-            path: path.to_owned(),
-        })
+        self.try_delete_files(&[path])
     }
 
     pub(crate) fn try_delete_files(&self, paths: &[&Path]) -> Result<u64, Error> {
