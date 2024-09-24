@@ -29,6 +29,9 @@ pub trait BfsSettingsProvider {
 
 #[derive(Debug, Error)]
 pub enum BfsSettingsError {
+    #[error("`threads` not set")]
+    ThreadsNotSet,
+
     #[error("`chunk_size_bytes` not set")]
     ChunkSizeBytesNotSet,
 
@@ -100,7 +103,7 @@ pub enum BfsSettingsError {
 
 #[derive(Debug)]
 pub struct BfsSettingsBuilder<P: BfsSettingsProvider> {
-    threads: usize,
+    threads: Option<usize>,
     chunk_size_bytes: Option<usize>,
     update_memory: Option<usize>,
     num_update_blocks: Option<usize>,
@@ -128,7 +131,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            threads: 1,
+            threads: None,
             chunk_size_bytes: None,
             update_memory: None,
             num_update_blocks: None,
@@ -149,7 +152,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
 
     #[must_use]
     pub fn threads(mut self, threads: usize) -> Self {
-        self.threads = threads;
+        self.threads = Some(threads);
         self
     }
 
@@ -266,17 +269,18 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
         let num_update_blocks = self
             .num_update_blocks
             .ok_or(BfsSettingsError::NumUpdateBlocksNotSet)?;
+        let threads = self.threads.ok_or(BfsSettingsError::ThreadsNotSet)?;
         let num_chunks = state_size as usize / (8 * chunk_size_bytes);
-        if num_update_blocks <= self.threads * num_chunks {
+        if num_update_blocks <= threads * num_chunks {
             return Err(BfsSettingsError::NotEnoughUpdateBlocks {
                 num_update_blocks,
-                threads: self.threads,
+                threads,
                 num_chunks,
             });
         }
 
         Ok(BfsSettings {
-            threads: self.threads,
+            threads,
             chunk_size_bytes,
             update_memory: self
                 .update_memory
