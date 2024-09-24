@@ -246,7 +246,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
         self
     }
 
-    pub fn build(self) -> Result<BfsSettings<P>, BfsSettingsError> {
+    pub fn build_no_defaults(self) -> Result<BfsSettings<P>, BfsSettingsError> {
         // Limit to 2^29 bytes so that we can store 32 bit values in the update files
         let chunk_size_bytes = self
             .chunk_size_bytes
@@ -321,6 +321,30 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
                 .settings_provider
                 .ok_or(BfsSettingsError::SettingsProviderNotSet)?,
         })
+    }
+
+    pub fn build(mut self) -> Result<BfsSettings<P>, BfsSettingsError> {
+        self.threads.get_or_insert(1);
+        self.update_memory.get_or_insert(1 << 30);
+        self.capacity_check_frequency.get_or_insert(1 << 8);
+        self.initial_memory_limit.get_or_insert(1 << 26);
+        self.use_locked_io.get_or_insert(false);
+        self.sync_filesystem.get_or_insert(true);
+        self.compute_checksums.get_or_insert(true);
+        self.use_compression.get_or_insert(true);
+
+        let chunk_size_bytes = self
+            .chunk_size_bytes
+            .ok_or(BfsSettingsError::ChunkSizeBytesNotSet)?;
+        self.update_array_threshold
+            .get_or_insert(chunk_size_bytes as u64);
+
+        let state_size = self.state_size.ok_or(BfsSettingsError::StateSizeNotSet)?;
+        let num_chunks = state_size as usize / (8 * chunk_size_bytes);
+        self.num_update_blocks
+            .get_or_insert(2 * self.threads.unwrap() * num_chunks);
+
+        self.build_no_defaults()
     }
 }
 
