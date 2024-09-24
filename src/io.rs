@@ -650,10 +650,11 @@ pub struct LockedIO<'a, P: BfsSettingsProvider> {
 }
 
 impl<'a, P: BfsSettingsProvider> LockedIO<'a, P> {
-    pub fn new(settings: &'a BfsSettings<P>, disk_paths: Vec<PathBuf>) -> Self {
-        let disks = disk_paths
-            .into_iter()
-            .map(|disk_path| LockedDisk::new(settings, disk_path))
+    pub fn new(settings: &'a BfsSettings<P>) -> Self {
+        let disks = settings
+            .root_directories
+            .iter()
+            .map(|disk_path| LockedDisk::new(settings, disk_path.to_owned()))
             .collect();
 
         Self { disks }
