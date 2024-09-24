@@ -1127,8 +1127,7 @@ impl<
                                     available_space[chunk_root_idx] = a.saturating_add(size);
                                 } else if size
                                     > largest_not_compressed_per_drive[chunk_root_idx]
-                                        .map(|(_, size)| size)
-                                        .unwrap_or(0)
+                                        .map_or(0, |(_, size)| size)
                                 {
                                     largest_not_compressed_per_drive[chunk_root_idx] =
                                         Some((chunk_idx, size));
