@@ -13,6 +13,8 @@ use crate::{
     update::{blocks::FillableUpdateBlock, manager::UpdateManager},
 };
 
+pub const NONE: u64 = u64::MAX;
+
 pub(crate) enum InMemoryBfsResult {
     Complete,
     OutOfMemory {
@@ -588,6 +590,10 @@ impl<
                     expander(encoded, &mut expanded_nodes);
 
                     for node in expanded_nodes {
+                        if node == NONE {
+                            continue;
+                        }
+
                         let (idx, offset) = self.node_to_chunk_coords(node);
                         updates[idx]
                             .get_mut_or_init(|| {
@@ -652,6 +658,10 @@ impl<
                     expander(encoded, &mut expanded_nodes);
 
                     for node in expanded_nodes {
+                        if node == NONE {
+                            continue;
+                        }
+
                         let (idx, offset) = self.node_to_chunk_coords(node);
                         updates[idx]
                             .get_mut_or_init(|| {
@@ -735,6 +745,10 @@ impl<
                                 {
                                     expander(encoded, &mut expanded_nodes);
                                     for node in expanded_nodes {
+                                        if node == NONE {
+                                            continue;
+                                        }
+
                                         if !old.contains(&node) && !current.contains(&node) {
                                             next.insert(node);
                                         }
