@@ -181,9 +181,11 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
                 let file_name = Alphanumeric.sample_string(&mut rng, 16);
                 let file_path = dir_path.join(file_name);
 
-                let bytes_written = self
-                    .locked_io
-                    .write_file_multiple_buffers(&file_path, &buffers, false);
+                let bytes_written = self.locked_io.write_file_multiple_buffers(
+                    &file_path,
+                    &buffers,
+                    self.settings.use_compression,
+                );
 
                 let mut sizes_lock = self.sizes.write();
                 let sizes_for_depth = sizes_lock
@@ -441,7 +443,7 @@ impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
 
         let bytes_written =
             self.locked_io
-                .write_file(&file_path, update_buffer, self.settings.compress_bit_arrays);
+                .write_file(&file_path, update_buffer, self.settings.use_compression);
 
         let mut sizes_lock = self.sizes.write();
         let sizes_for_depth = sizes_lock

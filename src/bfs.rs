@@ -110,11 +110,9 @@ impl<
     fn try_read_chunk(&self, chunk_buffer: &mut [u8], depth: usize, chunk_idx: usize) -> bool {
         let file_path = self.settings.chunk_file_path(depth, chunk_idx);
 
-        let result = self.locked_io.try_read_file(
-            &file_path,
-            chunk_buffer,
-            self.settings.compress_bit_arrays,
-        );
+        let result =
+            self.locked_io
+                .try_read_file(&file_path, chunk_buffer, self.settings.use_compression);
 
         match result {
             Ok(()) => true,
@@ -140,7 +138,7 @@ impl<
     fn write_chunk(&self, chunk_buffer: &[u8], depth: usize, chunk_idx: usize) {
         let file_path = self.settings.chunk_file_path(depth, chunk_idx);
         self.locked_io
-            .write_file(&file_path, chunk_buffer, self.settings.compress_bit_arrays);
+            .write_file(&file_path, chunk_buffer, self.settings.use_compression);
     }
 
     fn delete_chunk_file(&self, depth: usize, chunk_idx: usize) {
@@ -218,7 +216,7 @@ impl<
         {
             let bytes = self
                 .locked_io
-                .read_to_vec(&file_path, self.settings.compress_bit_arrays);
+                .read_to_vec(&file_path, self.settings.use_compression);
             assert_eq!(bytes.len(), update_buffer.len());
 
             for (buf_byte, &new) in update_buffer.iter_mut().zip(bytes.iter()) {
@@ -632,7 +630,7 @@ impl<
         }) {
             let update_array_bytes = self
                 .locked_io
-                .read_to_vec(&file_path, self.settings.compress_bit_arrays);
+                .read_to_vec(&file_path, self.settings.use_compression);
             assert_eq!(update_array_bytes.len(), self.settings.chunk_size_bytes);
 
             for (byte_idx, &update_byte) in update_array_bytes.iter().enumerate() {

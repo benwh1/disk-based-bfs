@@ -68,8 +68,8 @@ pub enum BfsSettingsError {
     #[error("`compute_checksums` not set")]
     ComputeChecksumsNotSet,
 
-    #[error("`compress_bit_arrays` not set")]
-    CompressBitArraysNotSet,
+    #[error("`use_compression` not set")]
+    UseCompressionNotSet,
 
     #[error("`settings_provider` not set")]
     SettingsProviderNotSet,
@@ -114,7 +114,7 @@ pub struct BfsSettingsBuilder<P: BfsSettingsProvider> {
     use_locked_io: Option<bool>,
     sync_filesystem: Option<bool>,
     compute_checksums: Option<bool>,
-    compress_bit_arrays: Option<bool>,
+    use_compression: Option<bool>,
     settings_provider: Option<P>,
 }
 
@@ -142,7 +142,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             use_locked_io: None,
             sync_filesystem: None,
             compute_checksums: None,
-            compress_bit_arrays: None,
+            use_compression: None,
             settings_provider: None,
         }
     }
@@ -232,8 +232,8 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
     }
 
     #[must_use]
-    pub fn compress_bit_arrays(mut self, compress_bit_arrays: bool) -> Self {
-        self.compress_bit_arrays = Some(compress_bit_arrays);
+    pub fn use_compression(mut self, use_compression: bool) -> Self {
+        self.use_compression = Some(use_compression);
         self
     }
 
@@ -310,9 +310,9 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             compute_checksums: self
                 .compute_checksums
                 .ok_or(BfsSettingsError::ComputeChecksumsNotSet)?,
-            compress_bit_arrays: self
-                .compress_bit_arrays
-                .ok_or(BfsSettingsError::CompressBitArraysNotSet)?,
+            use_compression: self
+                .use_compression
+                .ok_or(BfsSettingsError::UseCompressionNotSet)?,
             settings_provider: self
                 .settings_provider
                 .ok_or(BfsSettingsError::SettingsProviderNotSet)?,
@@ -336,7 +336,7 @@ pub struct BfsSettings<P: BfsSettingsProvider> {
     pub(crate) use_locked_io: bool,
     pub(crate) sync_filesystem: bool,
     pub(crate) compute_checksums: bool,
-    pub(crate) compress_bit_arrays: bool,
+    pub(crate) use_compression: bool,
     pub(crate) settings_provider: P,
 }
 
