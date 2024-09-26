@@ -110,12 +110,7 @@ pub enum BfsSettingsError {
 }
 
 #[derive(Debug)]
-pub struct BfsSettingsBuilder<
-    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
-    Callback: BfsCallback + Clone + Sync,
-    P: BfsSettingsProvider + Sync,
-    const EXPANSION_NODES: usize,
-> {
+pub struct BfsSettingsBuilder<Expander, Callback, P, const EXPANSION_NODES: usize> {
     threads: Option<usize>,
     chunk_size_bytes: Option<usize>,
     update_memory: Option<usize>,
@@ -136,12 +131,8 @@ pub struct BfsSettingsBuilder<
     settings_provider: Option<P>,
 }
 
-impl<
-        Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
-        Callback: BfsCallback + Clone + Sync,
-        P: BfsSettingsProvider + Sync,
-        const EXPANSION_NODES: usize,
-    > BfsSettingsBuilder<Expander, Callback, P, EXPANSION_NODES>
+impl<Expander, Callback, P, const EXPANSION_NODES: usize>
+    BfsSettingsBuilder<Expander, Callback, P, EXPANSION_NODES>
 {
     #[must_use]
     pub fn new() -> Self {
@@ -275,7 +266,12 @@ impl<
         self
     }
 
-    pub fn run_no_defaults(self) -> Result<(), BfsSettingsError> {
+    pub fn run_no_defaults(self) -> Result<(), BfsSettingsError>
+    where
+        Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+        Callback: BfsCallback + Clone + Sync,
+        P: BfsSettingsProvider + Sync,
+    {
         // Limit to 2^29 bytes so that we can store 32 bit values in the update files
         let chunk_size_bytes = self
             .chunk_size_bytes
@@ -362,7 +358,12 @@ impl<
         Ok(())
     }
 
-    pub fn run(mut self) -> Result<(), BfsSettingsError> {
+    pub fn run(mut self) -> Result<(), BfsSettingsError>
+    where
+        Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+        Callback: BfsCallback + Clone + Sync,
+        P: BfsSettingsProvider + Sync,
+    {
         self.threads.get_or_insert(1);
         self.update_memory.get_or_insert(1 << 30);
         self.capacity_check_frequency.get_or_insert(1 << 8);
