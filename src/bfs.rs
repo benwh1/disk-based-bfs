@@ -8,13 +8,12 @@ use serde_derive::{Deserialize, Serialize};
 use crate::{
     callback::BfsCallback,
     chunk_buffer_list::ChunkBufferList,
+    expander::{BfsExpander, NONE},
     io::{self, LockedIO},
     provider::{BfsSettingsProvider, ChunkFilesBehavior, UpdateFilesBehavior},
     settings::BfsSettings,
     update::{blocks::FillableUpdateBlock, manager::UpdateManager},
 };
-
-pub const NONE: u64 = u64::MAX;
 
 pub(crate) enum InMemoryBfsResult {
     Complete,
@@ -44,7 +43,7 @@ pub(crate) struct Bfs<'a, Expander, Callback, Provider, const EXPANSION_NODES: u
 impl<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize>
     Bfs<'a, Expander, Callback, Provider, EXPANSION_NODES>
 where
-    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+    Expander: BfsExpander<EXPANSION_NODES> + Clone + Sync,
     Callback: BfsCallback + Clone + Sync,
     Provider: BfsSettingsProvider + Sync,
 {
@@ -575,7 +574,7 @@ where
                     }
 
                     // Expand the node
-                    expander(encoded, &mut expanded_nodes);
+                    expander.expand(encoded, &mut expanded_nodes);
 
                     for node in expanded_nodes {
                         if node == NONE {
@@ -643,7 +642,7 @@ where
                         self.check_update_vec_capacity(updates, depth + 2);
                     }
 
-                    expander(encoded, &mut expanded_nodes);
+                    expander.expand(encoded, &mut expanded_nodes);
 
                     for node in expanded_nodes {
                         if node == NONE {
@@ -731,7 +730,7 @@ where
                                     .iter()
                                     .filter(|&&val| (thread_start..thread_end).contains(&val))
                                 {
-                                    expander(encoded, &mut expanded_nodes);
+                                    expander.expand(encoded, &mut expanded_nodes);
                                     for node in expanded_nodes {
                                         if node == NONE {
                                             continue;

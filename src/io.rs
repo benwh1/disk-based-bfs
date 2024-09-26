@@ -10,7 +10,10 @@ use thiserror::Error;
 use xxhash_rust::xxh3::Xxh3Default;
 use zstd::{Decoder, Encoder};
 
-use crate::{callback::BfsCallback, provider::BfsSettingsProvider, settings::BfsSettings};
+use crate::{
+    callback::BfsCallback, expander::BfsExpander, provider::BfsSettingsProvider,
+    settings::BfsSettings,
+};
 
 #[derive(Debug, Error)]
 pub(crate) enum Error {
@@ -657,7 +660,7 @@ pub(crate) struct LockedIO<'a, Expander, Callback, Provider, const EXPANSION_NOD
 impl<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize>
     LockedIO<'a, Expander, Callback, Provider, EXPANSION_NODES>
 where
-    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+    Expander: BfsExpander<EXPANSION_NODES> + Clone + Sync,
     Callback: BfsCallback + Clone + Sync,
     Provider: BfsSettingsProvider + Sync,
 {

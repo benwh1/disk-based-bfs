@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::{callback::BfsCallback, provider::BfsSettingsProvider};
+use crate::{callback::BfsCallback, expander::BfsExpander, provider::BfsSettingsProvider};
 
 #[derive(Debug)]
 pub(crate) struct BfsSettings<Expander, Callback, Provider, const EXPANSION_NODES: usize> {
@@ -27,7 +27,7 @@ pub(crate) struct BfsSettings<Expander, Callback, Provider, const EXPANSION_NODE
 impl<Expander, Callback, Provider, const EXPANSION_NODES: usize>
     BfsSettings<Expander, Callback, Provider, EXPANSION_NODES>
 where
-    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+    Expander: BfsExpander<EXPANSION_NODES> + Clone + Sync,
     Callback: BfsCallback + Clone + Sync,
     Provider: BfsSettingsProvider + Sync,
 {

@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::{
-    bfs::Bfs, callback::BfsCallback, io::LockedIO, provider::BfsSettingsProvider,
-    settings::BfsSettings,
+    bfs::Bfs, callback::BfsCallback, expander::BfsExpander, io::LockedIO,
+    provider::BfsSettingsProvider, settings::BfsSettings,
 };
 
 #[derive(Debug, Error)]
@@ -112,7 +112,7 @@ pub struct BfsBuilder<Expander, Callback, Provider, const EXPANSION_NODES: usize
 impl<Expander, Callback, Provider, const EXPANSION_NODES: usize> Default
     for BfsBuilder<Expander, Callback, Provider, EXPANSION_NODES>
 where
-    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+    Expander: BfsExpander<EXPANSION_NODES> + Clone + Sync,
     Callback: BfsCallback + Clone + Sync,
     Provider: BfsSettingsProvider + Sync,
 {
@@ -124,7 +124,7 @@ where
 impl<Expander, Callback, Provider, const EXPANSION_NODES: usize>
     BfsBuilder<Expander, Callback, Provider, EXPANSION_NODES>
 where
-    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+    Expander: BfsExpander<EXPANSION_NODES> + Clone + Sync,
     Callback: BfsCallback + Clone + Sync,
     Provider: BfsSettingsProvider + Sync,
 {

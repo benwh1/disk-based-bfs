@@ -24,6 +24,7 @@ mod bfs;
 pub mod builder;
 pub mod callback;
 mod chunk_buffer_list;
+pub mod expander;
 mod io;
 pub mod provider;
 mod settings;

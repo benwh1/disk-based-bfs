@@ -6,6 +6,7 @@ use rand::distributions::{Alphanumeric, DistString as _};
 
 use crate::{
     callback::BfsCallback,
+    expander::BfsExpander,
     io::LockedIO,
     provider::BfsSettingsProvider,
     settings::BfsSettings,
@@ -43,7 +44,7 @@ pub(crate) struct UpdateManager<'a, Expander, Callback, Provider, const EXPANSIO
 impl<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize>
     UpdateManager<'a, Expander, Callback, Provider, EXPANSION_NODES>
 where
-    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+    Expander: BfsExpander<EXPANSION_NODES> + Clone + Sync,
     Callback: BfsCallback + Clone + Sync,
     Provider: BfsSettingsProvider + Sync,
 {
