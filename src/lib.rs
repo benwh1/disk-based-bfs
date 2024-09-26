@@ -20,11 +20,11 @@
 #![deny(clippy::branches_sharing_code)]
 #![deny(clippy::redundant_clone)]
 
-pub mod bfs;
+mod bfs;
 pub mod builder;
 pub mod callback;
-pub mod chunk_buffer_list;
-pub mod io;
+mod chunk_buffer_list;
+mod io;
 pub mod provider;
-pub mod settings;
-pub mod update;
+mod settings;
+mod update;
