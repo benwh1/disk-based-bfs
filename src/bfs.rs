@@ -9,7 +9,8 @@ use crate::{
     callback::BfsCallback,
     chunk_buffer_list::ChunkBufferList,
     io::{self, LockedIO},
-    settings::{BfsSettings, BfsSettingsProvider, ChunkFilesBehavior, UpdateFilesBehavior},
+    provider::{BfsSettingsProvider, ChunkFilesBehavior, UpdateFilesBehavior},
+    settings::BfsSettings,
     update::{blocks::FillableUpdateBlock, manager::UpdateManager},
 };
 

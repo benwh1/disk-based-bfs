@@ -10,10 +10,7 @@ use thiserror::Error;
 use xxhash_rust::xxh3::Xxh3Default;
 use zstd::{Decoder, Encoder};
 
-use crate::{
-    callback::BfsCallback,
-    settings::{BfsSettings, BfsSettingsProvider},
-};
+use crate::{callback::BfsCallback, provider::BfsSettingsProvider, settings::BfsSettings};
 
 #[derive(Debug, Error)]
 pub(crate) enum Error {

@@ -25,5 +25,6 @@ pub mod builder;
 pub mod callback;
 pub mod chunk_buffer_list;
 pub mod io;
+pub mod provider;
 pub mod settings;
 pub mod update;

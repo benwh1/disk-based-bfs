@@ -3,10 +3,8 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::{
-    bfs::Bfs,
-    callback::BfsCallback,
-    io::LockedIO,
-    settings::{BfsSettings, BfsSettingsProvider},
+    bfs::Bfs, callback::BfsCallback, io::LockedIO, provider::BfsSettingsProvider,
+    settings::BfsSettings,
 };
 
 #[derive(Debug, Error)]

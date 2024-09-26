@@ -7,7 +7,8 @@ use rand::distributions::{Alphanumeric, DistString as _};
 use crate::{
     callback::BfsCallback,
     io::LockedIO,
-    settings::{BfsSettings, BfsSettingsProvider},
+    provider::BfsSettingsProvider,
+    settings::BfsSettings,
     update::blocks::{AvailableUpdateBlock, FillableUpdateBlock, FilledUpdateBlock},
 };
 
