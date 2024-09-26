@@ -653,7 +653,7 @@ impl<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize>
     }
 }
 
-pub struct LockedIO<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize> {
+pub(crate) struct LockedIO<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize> {
     disks: Vec<LockedDisk<'a, Expander, Callback, Provider, EXPANSION_NODES>>,
 }
 
@@ -664,7 +664,9 @@ where
     Callback: BfsCallback + Clone + Sync,
     Provider: BfsSettingsProvider + Sync,
 {
-    pub fn new(settings: &'a BfsSettings<Expander, Callback, Provider, EXPANSION_NODES>) -> Self {
+    pub(crate) fn new(
+        settings: &'a BfsSettings<Expander, Callback, Provider, EXPANSION_NODES>,
+    ) -> Self {
         let disks = settings
             .root_directories
             .iter()
