@@ -111,6 +111,18 @@ pub struct BfsBuilder<Expander, Callback, Provider, const EXPANSION_NODES: usize
     settings_provider: Option<Provider>,
 }
 
+impl<Expander, Callback, Provider, const EXPANSION_NODES: usize> Default
+    for BfsBuilder<Expander, Callback, Provider, EXPANSION_NODES>
+where
+    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+    Callback: BfsCallback + Clone + Sync,
+    Provider: BfsSettingsProvider + Sync,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<Expander, Callback, Provider, const EXPANSION_NODES: usize>
     BfsBuilder<Expander, Callback, Provider, EXPANSION_NODES>
 where
