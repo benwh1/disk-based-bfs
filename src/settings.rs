@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+use crate::{bfs::Bfs, callback::BfsCallback, io::LockedIO};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateFilesBehavior {
     DontCompress,
@@ -74,6 +76,12 @@ pub enum BfsSettingsError {
     #[error("`use_compression` not set")]
     UseCompressionNotSet,
 
+    #[error("`expander` not set")]
+    ExpanderNotSet,
+
+    #[error("`callback` not set")]
+    CallbackNotSet,
+
     #[error("`settings_provider` not set")]
     SettingsProviderNotSet,
 
@@ -102,7 +110,12 @@ pub enum BfsSettingsError {
 }
 
 #[derive(Debug)]
-pub struct BfsSettingsBuilder<P: BfsSettingsProvider> {
+pub struct BfsSettingsBuilder<
+    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+    Callback: BfsCallback + Clone + Sync,
+    P: BfsSettingsProvider + Sync,
+    const EXPANSION_NODES: usize,
+> {
     threads: Option<usize>,
     chunk_size_bytes: Option<usize>,
     update_memory: Option<usize>,
@@ -118,16 +131,18 @@ pub struct BfsSettingsBuilder<P: BfsSettingsProvider> {
     sync_filesystem: Option<bool>,
     compute_checksums: Option<bool>,
     use_compression: Option<bool>,
+    expander: Option<Expander>,
+    callback: Option<Callback>,
     settings_provider: Option<P>,
 }
 
-impl<P: BfsSettingsProvider> Default for BfsSettingsBuilder<P> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
+impl<
+        Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+        Callback: BfsCallback + Clone + Sync,
+        P: BfsSettingsProvider + Sync,
+        const EXPANSION_NODES: usize,
+    > BfsSettingsBuilder<Expander, Callback, P, EXPANSION_NODES>
+{
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -146,6 +161,8 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             sync_filesystem: None,
             compute_checksums: None,
             use_compression: None,
+            expander: None,
+            callback: None,
             settings_provider: None,
         }
     }
@@ -241,12 +258,24 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
     }
 
     #[must_use]
+    pub fn expander(mut self, expander: Expander) -> Self {
+        self.expander = Some(expander);
+        self
+    }
+
+    #[must_use]
+    pub fn callback(mut self, callback: Callback) -> Self {
+        self.callback = Some(callback);
+        self
+    }
+
+    #[must_use]
     pub fn settings_provider(mut self, settings_provider: P) -> Self {
         self.settings_provider = Some(settings_provider);
         self
     }
 
-    pub fn build_no_defaults(self) -> Result<BfsSettings<P>, BfsSettingsError> {
+    pub fn run_no_defaults(self) -> Result<(), BfsSettingsError> {
         // Limit to 2^29 bytes so that we can store 32 bit values in the update files
         let chunk_size_bytes = self
             .chunk_size_bytes
@@ -279,7 +308,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             });
         }
 
-        Ok(BfsSettings {
+        let settings = BfsSettings {
             threads,
             chunk_size_bytes,
             update_memory: self
@@ -320,10 +349,20 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
             settings_provider: self
                 .settings_provider
                 .ok_or(BfsSettingsError::SettingsProviderNotSet)?,
-        })
+        };
+
+        let expander = self.expander.ok_or(BfsSettingsError::ExpanderNotSet)?;
+        let callback = self.callback.ok_or(BfsSettingsError::CallbackNotSet)?;
+
+        let locked_io = LockedIO::new(&settings);
+
+        let bfs = Bfs::new(&settings, &locked_io, expander, callback);
+        bfs.run();
+
+        Ok(())
     }
 
-    pub fn build(mut self) -> Result<BfsSettings<P>, BfsSettingsError> {
+    pub fn run(mut self) -> Result<(), BfsSettingsError> {
         self.threads.get_or_insert(1);
         self.update_memory.get_or_insert(1 << 30);
         self.capacity_check_frequency.get_or_insert(1 << 8);
@@ -344,7 +383,7 @@ impl<P: BfsSettingsProvider> BfsSettingsBuilder<P> {
         self.num_update_blocks
             .get_or_insert(2 * self.threads.unwrap() * num_chunks);
 
-        self.build_no_defaults()
+        self.run_no_defaults()
     }
 }
 

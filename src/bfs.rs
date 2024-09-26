@@ -33,7 +33,7 @@ enum State {
     Done,
 }
 
-pub struct Bfs<
+pub(crate) struct Bfs<
     'a,
     Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
     Callback: BfsCallback + Clone + Sync,
@@ -56,7 +56,7 @@ impl<
         const EXPANSION_NODES: usize,
     > Bfs<'a, Expander, Callback, P, EXPANSION_NODES>
 {
-    pub fn new(
+    pub(crate) fn new(
         settings: &'a BfsSettings<P>,
         locked_io: &'a LockedIO<P>,
         expander: Expander,
@@ -1308,7 +1308,7 @@ impl<
         self.write_state(State::Done);
     }
 
-    pub fn run(&self) {
+    pub(crate) fn run(&self) {
         match self.read_state() {
             Some(s) => match s {
                 State::Iteration { mut depth } => {
