@@ -28,7 +28,7 @@ struct BlockCondition {
     block_available_cvar: Condvar,
 }
 
-pub(crate) struct UpdateManager<'a, Provider: BfsSettingsProvider + Sync> {
+pub(crate) struct UpdateManager<'a, Provider> {
     settings: &'a BfsSettings<Provider>,
     locked_io: &'a LockedIO<'a, Provider>,
     sizes: RwLock<HashMap<usize, Vec<u64>>>,
@@ -38,7 +38,10 @@ pub(crate) struct UpdateManager<'a, Provider: BfsSettingsProvider + Sync> {
     block_condition: Arc<BlockCondition>,
 }
 
-impl<'a, Provider: BfsSettingsProvider + Sync> UpdateManager<'a, Provider> {
+impl<'a, Provider> UpdateManager<'a, Provider>
+where
+    Provider: BfsSettingsProvider + Sync,
+{
     pub(crate) fn new(
         settings: &'a BfsSettings<Provider>,
         locked_io: &'a LockedIO<Provider>,

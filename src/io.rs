@@ -544,13 +544,16 @@ fn delete(disk_mutex: Option<&Mutex<()>>, paths: &[&Path]) -> Result<u64, Error>
     Ok(bytes_deleted)
 }
 
-pub(crate) struct LockedDisk<'a, Provider: BfsSettingsProvider> {
+pub(crate) struct LockedDisk<'a, Provider> {
     settings: &'a BfsSettings<Provider>,
     lock: Mutex<()>,
     disk_path: PathBuf,
 }
 
-impl<'a, Provider: BfsSettingsProvider> LockedDisk<'a, Provider> {
+impl<'a, Provider> LockedDisk<'a, Provider>
+where
+    Provider: BfsSettingsProvider,
+{
     fn new(settings: &'a BfsSettings<Provider>, disk_path: PathBuf) -> Self {
         Self {
             settings,
@@ -645,11 +648,14 @@ impl<'a, Provider: BfsSettingsProvider> LockedDisk<'a, Provider> {
     }
 }
 
-pub struct LockedIO<'a, Provider: BfsSettingsProvider> {
+pub struct LockedIO<'a, Provider> {
     disks: Vec<LockedDisk<'a, Provider>>,
 }
 
-impl<'a, Provider: BfsSettingsProvider> LockedIO<'a, Provider> {
+impl<'a, Provider> LockedIO<'a, Provider>
+where
+    Provider: BfsSettingsProvider,
+{
     pub fn new(settings: &'a BfsSettings<Provider>) -> Self {
         let disks = settings
             .root_directories

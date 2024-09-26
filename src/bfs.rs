@@ -33,13 +33,7 @@ enum State {
     Done,
 }
 
-pub(crate) struct Bfs<
-    'a,
-    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
-    Callback: BfsCallback + Clone + Sync,
-    Provider: BfsSettingsProvider + Sync,
-    const EXPANSION_NODES: usize,
-> {
+pub(crate) struct Bfs<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize> {
     settings: &'a BfsSettings<Provider>,
     locked_io: &'a LockedIO<'a, Provider>,
     expander: Expander,
@@ -48,13 +42,12 @@ pub(crate) struct Bfs<
     update_file_manager: UpdateManager<'a, Provider>,
 }
 
-impl<
-        'a,
-        Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
-        Callback: BfsCallback + Clone + Sync,
-        Provider: BfsSettingsProvider + Sync,
-        const EXPANSION_NODES: usize,
-    > Bfs<'a, Expander, Callback, Provider, EXPANSION_NODES>
+impl<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize>
+    Bfs<'a, Expander, Callback, Provider, EXPANSION_NODES>
+where
+    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+    Callback: BfsCallback + Clone + Sync,
+    Provider: BfsSettingsProvider + Sync,
 {
     pub(crate) fn new(
         settings: &'a BfsSettings<Provider>,
