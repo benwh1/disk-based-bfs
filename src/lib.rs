@@ -21,6 +21,7 @@
 #![deny(clippy::redundant_clone)]
 
 pub mod bfs;
+pub mod builder;
 pub mod callback;
 pub mod chunk_buffer_list;
 pub mod io;
