@@ -110,7 +110,7 @@ pub enum BfsSettingsError {
 }
 
 #[derive(Debug)]
-pub struct BfsSettingsBuilder<Expander, Callback, P, const EXPANSION_NODES: usize> {
+pub struct BfsSettingsBuilder<Expander, Callback, Provider, const EXPANSION_NODES: usize> {
     threads: Option<usize>,
     chunk_size_bytes: Option<usize>,
     update_memory: Option<usize>,
@@ -128,11 +128,11 @@ pub struct BfsSettingsBuilder<Expander, Callback, P, const EXPANSION_NODES: usiz
     use_compression: Option<bool>,
     expander: Option<Expander>,
     callback: Option<Callback>,
-    settings_provider: Option<P>,
+    settings_provider: Option<Provider>,
 }
 
-impl<Expander, Callback, P, const EXPANSION_NODES: usize>
-    BfsSettingsBuilder<Expander, Callback, P, EXPANSION_NODES>
+impl<Expander, Callback, Provider, const EXPANSION_NODES: usize>
+    BfsSettingsBuilder<Expander, Callback, Provider, EXPANSION_NODES>
 {
     #[must_use]
     pub fn new() -> Self {
@@ -261,7 +261,7 @@ impl<Expander, Callback, P, const EXPANSION_NODES: usize>
     }
 
     #[must_use]
-    pub fn settings_provider(mut self, settings_provider: P) -> Self {
+    pub fn settings_provider(mut self, settings_provider: Provider) -> Self {
         self.settings_provider = Some(settings_provider);
         self
     }
@@ -270,7 +270,7 @@ impl<Expander, Callback, P, const EXPANSION_NODES: usize>
     where
         Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
         Callback: BfsCallback + Clone + Sync,
-        P: BfsSettingsProvider + Sync,
+        Provider: BfsSettingsProvider + Sync,
     {
         // Limit to 2^29 bytes so that we can store 32 bit values in the update files
         let chunk_size_bytes = self
@@ -362,7 +362,7 @@ impl<Expander, Callback, P, const EXPANSION_NODES: usize>
     where
         Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
         Callback: BfsCallback + Clone + Sync,
-        P: BfsSettingsProvider + Sync,
+        Provider: BfsSettingsProvider + Sync,
     {
         self.threads.get_or_insert(1);
         self.update_memory.get_or_insert(1 << 30);
@@ -389,7 +389,7 @@ impl<Expander, Callback, P, const EXPANSION_NODES: usize>
 }
 
 #[derive(Debug)]
-pub struct BfsSettings<P: BfsSettingsProvider> {
+pub struct BfsSettings<Provider: BfsSettingsProvider> {
     pub(crate) threads: usize,
     pub(crate) chunk_size_bytes: usize,
     pub(crate) update_memory: usize,
@@ -405,10 +405,10 @@ pub struct BfsSettings<P: BfsSettingsProvider> {
     pub(crate) sync_filesystem: bool,
     pub(crate) compute_checksums: bool,
     pub(crate) use_compression: bool,
-    pub(crate) settings_provider: P,
+    pub(crate) settings_provider: Provider,
 }
 
-impl<P: BfsSettingsProvider> BfsSettings<P> {
+impl<Provider: BfsSettingsProvider> BfsSettings<Provider> {
     fn array_bytes(&self) -> usize {
         self.state_size as usize / 8
     }

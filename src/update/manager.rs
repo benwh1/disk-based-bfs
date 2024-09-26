@@ -28,9 +28,9 @@ struct BlockCondition {
     block_available_cvar: Condvar,
 }
 
-pub(crate) struct UpdateManager<'a, P: BfsSettingsProvider + Sync> {
-    settings: &'a BfsSettings<P>,
-    locked_io: &'a LockedIO<'a, P>,
+pub(crate) struct UpdateManager<'a, Provider: BfsSettingsProvider + Sync> {
+    settings: &'a BfsSettings<Provider>,
+    locked_io: &'a LockedIO<'a, Provider>,
     sizes: RwLock<HashMap<usize, Vec<u64>>>,
     size_file_lock: Mutex<()>,
     available_blocks: Mutex<Vec<AvailableUpdateBlock>>,
@@ -38,8 +38,11 @@ pub(crate) struct UpdateManager<'a, P: BfsSettingsProvider + Sync> {
     block_condition: Arc<BlockCondition>,
 }
 
-impl<'a, P: BfsSettingsProvider + Sync> UpdateManager<'a, P> {
-    pub(crate) fn new(settings: &'a BfsSettings<P>, locked_io: &'a LockedIO<P>) -> Self {
+impl<'a, Provider: BfsSettingsProvider + Sync> UpdateManager<'a, Provider> {
+    pub(crate) fn new(
+        settings: &'a BfsSettings<Provider>,
+        locked_io: &'a LockedIO<Provider>,
+    ) -> Self {
         let num_blocks = settings.num_update_blocks;
 
         tracing::debug!("creating {num_blocks} update blocks");

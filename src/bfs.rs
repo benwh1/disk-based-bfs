@@ -37,28 +37,28 @@ pub(crate) struct Bfs<
     'a,
     Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
     Callback: BfsCallback + Clone + Sync,
-    P: BfsSettingsProvider + Sync,
+    Provider: BfsSettingsProvider + Sync,
     const EXPANSION_NODES: usize,
 > {
-    settings: &'a BfsSettings<P>,
-    locked_io: &'a LockedIO<'a, P>,
+    settings: &'a BfsSettings<Provider>,
+    locked_io: &'a LockedIO<'a, Provider>,
     expander: Expander,
     callback: Callback,
     chunk_buffers: ChunkBufferList,
-    update_file_manager: UpdateManager<'a, P>,
+    update_file_manager: UpdateManager<'a, Provider>,
 }
 
 impl<
         'a,
         Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
         Callback: BfsCallback + Clone + Sync,
-        P: BfsSettingsProvider + Sync,
+        Provider: BfsSettingsProvider + Sync,
         const EXPANSION_NODES: usize,
-    > Bfs<'a, Expander, Callback, P, EXPANSION_NODES>
+    > Bfs<'a, Expander, Callback, Provider, EXPANSION_NODES>
 {
     pub(crate) fn new(
-        settings: &'a BfsSettings<P>,
-        locked_io: &'a LockedIO<P>,
+        settings: &'a BfsSettings<Provider>,
+        locked_io: &'a LockedIO<Provider>,
         expander: Expander,
         callback: Callback,
     ) -> Self {
