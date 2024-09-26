@@ -10,7 +10,10 @@ use thiserror::Error;
 use xxhash_rust::xxh3::Xxh3Default;
 use zstd::{Decoder, Encoder};
 
-use crate::settings::{BfsSettings, BfsSettingsProvider};
+use crate::{
+    callback::BfsCallback,
+    settings::{BfsSettings, BfsSettingsProvider},
+};
 
 #[derive(Debug, Error)]
 pub(crate) enum Error {
@@ -544,17 +547,19 @@ fn delete(disk_mutex: Option<&Mutex<()>>, paths: &[&Path]) -> Result<u64, Error>
     Ok(bytes_deleted)
 }
 
-pub(crate) struct LockedDisk<'a, Provider> {
-    settings: &'a BfsSettings<Provider>,
+pub(crate) struct LockedDisk<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize> {
+    settings: &'a BfsSettings<Expander, Callback, Provider, EXPANSION_NODES>,
     lock: Mutex<()>,
     disk_path: PathBuf,
 }
 
-impl<'a, Provider> LockedDisk<'a, Provider>
-where
-    Provider: BfsSettingsProvider,
+impl<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize>
+    LockedDisk<'a, Expander, Callback, Provider, EXPANSION_NODES>
 {
-    fn new(settings: &'a BfsSettings<Provider>, disk_path: PathBuf) -> Self {
+    fn new(
+        settings: &'a BfsSettings<Expander, Callback, Provider, EXPANSION_NODES>,
+        disk_path: PathBuf,
+    ) -> Self {
         Self {
             settings,
             lock: Mutex::new(()),
@@ -648,15 +653,18 @@ where
     }
 }
 
-pub struct LockedIO<'a, Provider> {
-    disks: Vec<LockedDisk<'a, Provider>>,
+pub struct LockedIO<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize> {
+    disks: Vec<LockedDisk<'a, Expander, Callback, Provider, EXPANSION_NODES>>,
 }
 
-impl<'a, Provider> LockedIO<'a, Provider>
+impl<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize>
+    LockedIO<'a, Expander, Callback, Provider, EXPANSION_NODES>
 where
-    Provider: BfsSettingsProvider,
+    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+    Callback: BfsCallback + Clone + Sync,
+    Provider: BfsSettingsProvider + Sync,
 {
-    pub fn new(settings: &'a BfsSettings<Provider>) -> Self {
+    pub fn new(settings: &'a BfsSettings<Expander, Callback, Provider, EXPANSION_NODES>) -> Self {
         let disks = settings
             .root_directories
             .iter()

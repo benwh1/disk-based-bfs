@@ -34,12 +34,10 @@ enum State {
 }
 
 pub(crate) struct Bfs<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize> {
-    settings: &'a BfsSettings<Provider>,
-    locked_io: &'a LockedIO<'a, Provider>,
-    expander: Expander,
-    callback: Callback,
+    settings: &'a BfsSettings<Expander, Callback, Provider, EXPANSION_NODES>,
+    locked_io: &'a LockedIO<'a, Expander, Callback, Provider, EXPANSION_NODES>,
     chunk_buffers: ChunkBufferList,
-    update_file_manager: UpdateManager<'a, Provider>,
+    update_file_manager: UpdateManager<'a, Expander, Callback, Provider, EXPANSION_NODES>,
 }
 
 impl<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize>
@@ -50,10 +48,8 @@ where
     Provider: BfsSettingsProvider + Sync,
 {
     pub(crate) fn new(
-        settings: &'a BfsSettings<Provider>,
-        locked_io: &'a LockedIO<Provider>,
-        expander: Expander,
-        callback: Callback,
+        settings: &'a BfsSettings<Expander, Callback, Provider, EXPANSION_NODES>,
+        locked_io: &'a LockedIO<Expander, Callback, Provider, EXPANSION_NODES>,
     ) -> Self {
         let chunk_buffers = ChunkBufferList::new_empty(settings.threads);
         let update_file_manager = UpdateManager::new(settings, locked_io);
@@ -61,8 +57,6 @@ where
         Self {
             settings,
             locked_io,
-            expander,
-            callback,
             chunk_buffers,
             update_file_manager,
         }
@@ -465,7 +459,7 @@ where
             .map(|_| OnceCell::new())
             .collect::<Vec<_>>();
 
-        let mut callback = self.callback.clone();
+        let mut callback = self.settings.callback.clone();
 
         new_positions += self.update_and_expand_from_update_files(
             chunk_buffer,
@@ -548,7 +542,7 @@ where
     ) -> u64 {
         let mut new_positions = 0u64;
 
-        let mut expander = self.expander.clone();
+        let mut expander = self.settings.expander.clone();
         let mut expanded_nodes = [0u64; EXPANSION_NODES];
 
         let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
@@ -613,7 +607,7 @@ where
     ) -> u64 {
         let mut new_positions = 0u64;
 
-        let mut expander = self.expander.clone();
+        let mut expander = self.settings.expander.clone();
         let mut expanded_nodes = [0u64; EXPANSION_NODES];
 
         let dir_path = self
@@ -686,7 +680,7 @@ where
         let mut expanded_nodes = [0u64; EXPANSION_NODES];
         let mut depth = 0;
 
-        let mut callback = self.callback.clone();
+        let mut callback = self.settings.callback.clone();
 
         for &state in &self.settings.initial_states {
             if current.insert(state) {
@@ -718,7 +712,7 @@ where
                                 format!("in-memory-bfs-{t:0>digits$}")
                             })
                             .spawn_scoped(s, move || {
-                                let mut expander = self.expander.clone();
+                                let mut expander = self.settings.expander.clone();
 
                                 let mut next = HashSet::with_hasher(CityHasher::default());
 

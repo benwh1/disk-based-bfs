@@ -341,17 +341,16 @@ where
             use_compression: self
                 .use_compression
                 .ok_or(BfsSettingsError::UseCompressionNotSet)?,
+            expander: self.expander.ok_or(BfsSettingsError::ExpanderNotSet)?,
+            callback: self.callback.ok_or(BfsSettingsError::CallbackNotSet)?,
             settings_provider: self
                 .settings_provider
                 .ok_or(BfsSettingsError::SettingsProviderNotSet)?,
         };
 
-        let expander = self.expander.ok_or(BfsSettingsError::ExpanderNotSet)?;
-        let callback = self.callback.ok_or(BfsSettingsError::CallbackNotSet)?;
-
         let locked_io = LockedIO::new(&settings);
 
-        let bfs = Bfs::new(&settings, &locked_io, expander, callback);
+        let bfs = Bfs::new(&settings, &locked_io);
         bfs.run();
 
         Ok(())
@@ -383,7 +382,7 @@ where
 }
 
 #[derive(Debug)]
-pub struct BfsSettings<Provider> {
+pub struct BfsSettings<Expander, Callback, Provider, const EXPANSION_NODES: usize> {
     pub(crate) threads: usize,
     pub(crate) chunk_size_bytes: usize,
     pub(crate) update_memory: usize,
@@ -399,12 +398,17 @@ pub struct BfsSettings<Provider> {
     pub(crate) sync_filesystem: bool,
     pub(crate) compute_checksums: bool,
     pub(crate) use_compression: bool,
+    pub(crate) expander: Expander,
+    pub(crate) callback: Callback,
     pub(crate) settings_provider: Provider,
 }
 
-impl<Provider> BfsSettings<Provider>
+impl<Expander, Callback, Provider, const EXPANSION_NODES: usize>
+    BfsSettings<Expander, Callback, Provider, EXPANSION_NODES>
 where
-    Provider: BfsSettingsProvider,
+    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+    Callback: BfsCallback + Clone + Sync,
+    Provider: BfsSettingsProvider + Sync,
 {
     fn array_bytes(&self) -> usize {
         self.state_size as usize / 8

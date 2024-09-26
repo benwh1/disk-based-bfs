@@ -5,6 +5,7 @@ use parking_lot::{Condvar, Mutex, RwLock};
 use rand::distributions::{Alphanumeric, DistString as _};
 
 use crate::{
+    callback::BfsCallback,
     io::LockedIO,
     settings::{BfsSettings, BfsSettingsProvider},
     update::blocks::{AvailableUpdateBlock, FillableUpdateBlock, FilledUpdateBlock},
@@ -28,9 +29,9 @@ struct BlockCondition {
     block_available_cvar: Condvar,
 }
 
-pub(crate) struct UpdateManager<'a, Provider> {
-    settings: &'a BfsSettings<Provider>,
-    locked_io: &'a LockedIO<'a, Provider>,
+pub(crate) struct UpdateManager<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize> {
+    settings: &'a BfsSettings<Expander, Callback, Provider, EXPANSION_NODES>,
+    locked_io: &'a LockedIO<'a, Expander, Callback, Provider, EXPANSION_NODES>,
     sizes: RwLock<HashMap<usize, Vec<u64>>>,
     size_file_lock: Mutex<()>,
     available_blocks: Mutex<Vec<AvailableUpdateBlock>>,
@@ -38,13 +39,16 @@ pub(crate) struct UpdateManager<'a, Provider> {
     block_condition: Arc<BlockCondition>,
 }
 
-impl<'a, Provider> UpdateManager<'a, Provider>
+impl<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize>
+    UpdateManager<'a, Expander, Callback, Provider, EXPANSION_NODES>
 where
+    Expander: FnMut(u64, &mut [u64; EXPANSION_NODES]) + Clone + Sync,
+    Callback: BfsCallback + Clone + Sync,
     Provider: BfsSettingsProvider + Sync,
 {
     pub(crate) fn new(
-        settings: &'a BfsSettings<Provider>,
-        locked_io: &'a LockedIO<Provider>,
+        settings: &'a BfsSettings<Expander, Callback, Provider, EXPANSION_NODES>,
+        locked_io: &'a LockedIO<Expander, Callback, Provider, EXPANSION_NODES>,
     ) -> Self {
         let num_blocks = settings.num_update_blocks;
 
