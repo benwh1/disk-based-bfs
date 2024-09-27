@@ -250,7 +250,9 @@ where
             .map(|entry| entry.path())
             .filter(|path| path.extension().is_none())
         {
-            let bytes = self.locked_io.read_to_vec(&file_path, false);
+            let bytes = self
+                .locked_io
+                .read_to_vec(&file_path, self.settings.use_compression);
             assert_eq!(bytes.len() % 4, 0);
 
             // Group the bytes into groups of 4
@@ -554,7 +556,9 @@ where
             let ext = path.extension().and_then(|ext| ext.to_str());
             ext.is_none() || ext == Some("used")
         }) {
-            let bytes = self.locked_io.read_to_vec(&file_path, false);
+            let bytes = self
+                .locked_io
+                .read_to_vec(&file_path, self.settings.use_compression);
             assert_eq!(bytes.len() % 4, 0);
 
             let chunk_offsets: &[u32] = bytemuck::cast_slice(&bytes);
@@ -835,7 +839,8 @@ where
             let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
             let file_name = Alphanumeric.sample_string(&mut rng, 16);
             let file_path = dir_path.join(file_name);
-            self.locked_io.write_file(&file_path, update_bytes, false);
+            self.locked_io
+                .write_file(&file_path, update_bytes, self.settings.use_compression);
         }
     }
 
