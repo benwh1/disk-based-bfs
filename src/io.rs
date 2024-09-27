@@ -547,7 +547,7 @@ fn delete(disk_mutex: Option<&Mutex<()>>, paths: &[&Path]) -> Result<u64, Error>
     Ok(bytes_deleted)
 }
 
-pub(crate) struct LockedDisk<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize> {
+struct LockedDisk<'a, Expander, Callback, Provider, const EXPANSION_NODES: usize> {
     settings: &'a BfsSettings<Expander, Callback, Provider, EXPANSION_NODES>,
     lock: Mutex<()>,
     disk_path: PathBuf,

@@ -15,7 +15,7 @@ use crate::{
     update::{blocks::FillableUpdateBlock, manager::UpdateManager},
 };
 
-pub(crate) enum InMemoryBfsResult {
+enum InMemoryBfsResult {
     Complete,
     OutOfMemory {
         old: HashSet<u64, CityHasher>,
