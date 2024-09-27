@@ -1,13 +1,13 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateFilesBehavior {
-    DontCompress,
-    CompressAndDelete,
-    CompressAndKeep,
+    DontMerge,
+    MergeAndDelete,
+    MergeAndKeep,
 }
 
 impl UpdateFilesBehavior {
-    pub(crate) fn should_compress(self) -> bool {
-        matches!(self, Self::CompressAndDelete | Self::CompressAndKeep)
+    pub(crate) fn should_merge(self) -> bool {
+        matches!(self, Self::MergeAndDelete | Self::MergeAndKeep)
     }
 }
 

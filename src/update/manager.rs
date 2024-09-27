@@ -165,7 +165,7 @@ where
             .sum::<u64>()
             * std::mem::size_of::<u32>() as u64;
 
-        // If the number of bytes to write is greater than the threshold, compress it into an
+        // If the number of bytes to write is greater than the threshold, merge the blocks into an
         // update array
         if bytes_to_write > self.settings.update_array_threshold {
             let mut update_buffer = vec![0u8; self.settings.chunk_size_bytes];
@@ -313,9 +313,8 @@ where
 
     /// Note: the sizes are not guaranteed to be *exactly* correct, because it's possible that we
     /// could write some update files to disk and then the program is terminated before we can write
-    /// the sizes. This isn't important though, because the sizes are only used to determine if we
-    /// should compress the update files, and it really doesn't matter if we sometimes compress them
-    /// slightly before or after the actual size reaches the threshold.
+    /// the sizes. This isn't important though, because the sizes are only used to calculate which
+    /// update files should be merged.
     fn write_sizes_to_disk(&self) {
         let _lock = self.size_file_lock.lock();
 
@@ -489,7 +488,7 @@ where
                     // `entry.metadata()` would panic since the file no longer exists, so we use
                     // 0 as the length instead. This does mean we skip over the renamed file,
                     // but it's not important because these numbers are only used as an
-                    // approximation to know when to compress update files.
+                    // approximation to know which update files to merge.
                     .map(|entry| entry.metadata().map_or(0, |m| m.len()))
                     .sum::<u64>()
             })

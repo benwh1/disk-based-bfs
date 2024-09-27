@@ -28,7 +28,7 @@ pub(crate) enum InMemoryBfsResult {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum State {
     Iteration { depth: usize },
-    CompressAllUpdateFiles { depth: usize },
+    MergeUpdateFiles { depth: usize },
     Cleanup { depth: usize },
     Done,
 }
@@ -268,7 +268,7 @@ where
         }
     }
 
-    fn has_update_files_to_compress(&self, depth: usize, chunk_idx: usize) -> bool {
+    fn has_update_files_to_merge(&self, depth: usize, chunk_idx: usize) -> bool {
         let dir_path = self.settings.update_chunk_dir_path(depth, chunk_idx);
         let read_dir = std::fs::read_dir(&dir_path)
             .inspect_err(|_| panic!("failed to read directory {dir_path:?}"))
@@ -297,10 +297,10 @@ where
             > 1
     }
 
-    fn compress_update_files(&self, update_buffer: &mut [u8], depth: usize, chunk_idx: usize) {
-        if !self.has_update_files_to_compress(depth, chunk_idx) {
+    fn merge_update_files(&self, update_buffer: &mut [u8], depth: usize, chunk_idx: usize) {
+        if !self.has_update_files_to_merge(depth, chunk_idx) {
             tracing::debug!(
-                "nothing to compress for depth {} -> {} chunk {chunk_idx}, skipping",
+                "no update files to merge for depth {} -> {} chunk {chunk_idx}, skipping",
                 depth - 1,
                 depth,
             );
@@ -311,7 +311,7 @@ where
         let gb = used_space as f64 / (1 << 30) as f64;
 
         tracing::info!(
-            "compressing {gb:.3} GiB of update files for depth {} -> {} chunk {chunk_idx}",
+            "merging {gb:.3} GiB of update files for depth {} -> {} chunk {chunk_idx}",
             depth - 1,
             depth,
         );
@@ -334,27 +334,27 @@ where
             .delete_used_update_files(depth, chunk_idx);
 
         tracing::info!(
-            "finished compressing update files for depth {} -> {} chunk {chunk_idx}",
+            "finished merging update files for depth {} -> {} chunk {chunk_idx}",
             depth - 1,
             depth,
         );
     }
 
-    fn compress_all_update_files(&self, depth: usize) {
+    fn merge_all_update_files(&self, depth: usize) {
         #[derive(Clone, Copy, PartialEq, Eq)]
         enum UpdateFileState {
-            NotCompressing,
-            CurrentlyCompressing,
-            Compressed,
+            NotMerging,
+            CurrentlyMerging,
+            Merged,
         }
 
         let update_file_states = Arc::new(RwLock::new(vec![
-            UpdateFileState::NotCompressing;
+            UpdateFileState::NotMerging;
             self.settings.num_array_chunks()
         ]));
         let pair = Arc::new((Mutex::new(false), Condvar::new()));
 
-        tracing::info!("compressing all depth {depth} update files");
+        tracing::info!("merging all depth {depth} update files");
 
         std::thread::scope(|s| {
             let threads = (0..self.settings.threads)
@@ -365,7 +365,7 @@ where
                     ThreadBuilder::new()
                         .name({
                             let digits = self.settings.threads.ilog10() as usize + 1;
-                            format!("compress-update-files-{t:0>digits$}")
+                            format!("merge-update-files-{t:0>digits$}")
                         })
                         .spawn_scoped(s, move || loop {
                             let (lock, cvar) = &*pair;
@@ -383,27 +383,27 @@ where
                             let update_file_states_read = update_file_states.read();
                             if update_file_states_read
                                 .iter()
-                                .all(|&x| x == UpdateFileState::Compressed)
+                                .all(|&x| x == UpdateFileState::Merged)
                             {
                                 *lock.lock() = true;
                                 cvar.notify_all();
                                 break;
                             }
 
-                            // Check for update files to compress
+                            // Check for update files to merge
                             let chunk_idx = update_file_states_read
                                 .iter()
-                                .position(|&x| x == UpdateFileState::NotCompressing);
+                                .position(|&x| x == UpdateFileState::NotMerging);
                             drop(update_file_states_read);
 
                             if let Some(chunk_idx) = chunk_idx {
-                                // Set the state to currently compressing
+                                // Set the state to currently merging
                                 let mut update_file_states_write = update_file_states.write();
                                 if update_file_states_write[chunk_idx]
-                                    == UpdateFileState::NotCompressing
+                                    == UpdateFileState::NotMerging
                                 {
                                     update_file_states_write[chunk_idx] =
-                                        UpdateFileState::CurrentlyCompressing;
+                                        UpdateFileState::CurrentlyMerging;
                                 } else {
                                     // Another thread got here first
                                     continue;
@@ -416,14 +416,14 @@ where
                                 // Get a chunk buffer
                                 let mut chunk_buffer = self.chunk_buffers.take().unwrap();
 
-                                self.compress_update_files(&mut chunk_buffer, depth, chunk_idx);
+                                self.merge_update_files(&mut chunk_buffer, depth, chunk_idx);
 
                                 // Put the chunk buffer back
                                 self.chunk_buffers.put(chunk_buffer);
 
-                                // Mark the update files as compressed
+                                // Mark the update files as merged
                                 let mut update_file_states_write = update_file_states.write();
-                                update_file_states_write[chunk_idx] = UpdateFileState::Compressed;
+                                update_file_states_write[chunk_idx] = UpdateFileState::Merged;
                                 drop(update_file_states_write);
 
                                 // Delete (now empty) update files directory
@@ -447,7 +447,7 @@ where
             threads.into_iter().for_each(|t| t.join().unwrap());
         });
 
-        tracing::info!("finished compressing all depth {depth} update files");
+        tracing::info!("finished merging all depth {depth} update files");
     }
 
     fn update_and_expand_chunk(
@@ -929,7 +929,7 @@ where
             .settings_provider
             .update_files_behavior(depth + 1)
         {
-            UpdateFilesBehavior::DontCompress | UpdateFilesBehavior::CompressAndDelete => {
+            UpdateFilesBehavior::DontMerge | UpdateFilesBehavior::MergeAndDelete => {
                 tracing::debug!(
                     "deleting update arrays for depth {depth} -> {} chunk {chunk_idx}",
                     depth + 1,
@@ -937,7 +937,7 @@ where
                 self.update_file_manager
                     .delete_update_arrays(depth + 1, chunk_idx);
             }
-            UpdateFilesBehavior::CompressAndKeep => {
+            UpdateFilesBehavior::MergeAndKeep => {
                 tracing::debug!(
                     "backing up update arrays for depth {depth} -> {} chunk {chunk_idx}",
                     depth + 1,
@@ -1018,8 +1018,8 @@ where
 
         #[derive(Clone, Copy, PartialEq, Eq)]
         enum UpdateFileState {
-            NotCompressing,
-            CurrentlyCompressing,
+            NotMerging,
+            CurrentlyMerging,
         }
 
         let chunk_states = Arc::new(RwLock::new(vec![
@@ -1027,7 +1027,7 @@ where
             self.settings.num_array_chunks()
         ]));
         let update_file_states = Arc::new(RwLock::new(vec![
-            UpdateFileState::NotCompressing;
+            UpdateFileState::NotMerging;
             self.settings.num_array_chunks()
         ]));
 
@@ -1085,7 +1085,7 @@ where
                             }
                             drop(chunk_states_read);
 
-                            // Check for update files to compress
+                            // Check for update files to merge
 
                             // Amount of space remaining on each disk
                             let mut available_space = self
@@ -1096,16 +1096,16 @@ where
                                 .collect::<Vec<_>>();
 
                             // Which chunk has the greatest update file size, and is not currently
-                            // being compressed
-                            let mut largest_not_compressed_per_drive =
+                            // being merged
+                            let mut largest_not_merged_per_drive =
                                 vec![None; self.settings.root_directories.len()];
 
                             let updates_size = self.update_file_manager.all_files_size(depth + 2);
 
                             // Calculate how much space would be available after all the currently
-                            // running update compressions are complete, and find the chunks with
-                            // the largest update file size that is not currently being compressed
-                            // on each drive
+                            // running update merges are complete, and find the chunks with the
+                            // largest update file size that is not currently being merged on each
+                            // drive
                             for (chunk_idx, (&state, &size)) in update_file_states
                                 .read()
                                 .iter()
@@ -1114,20 +1114,20 @@ where
                             {
                                 let chunk_root_idx =
                                     self.settings.settings_provider.chunk_root_idx(chunk_idx);
-                                if state == UpdateFileState::CurrentlyCompressing {
+                                if state == UpdateFileState::CurrentlyMerging {
                                     let a = available_space[chunk_root_idx];
                                     available_space[chunk_root_idx] = a.saturating_add(size);
                                 } else if size
-                                    > largest_not_compressed_per_drive[chunk_root_idx]
+                                    > largest_not_merged_per_drive[chunk_root_idx]
                                         .map_or(0, |(_, size)| size)
                                 {
-                                    largest_not_compressed_per_drive[chunk_root_idx] =
+                                    largest_not_merged_per_drive[chunk_root_idx] =
                                         Some((chunk_idx, size));
                                 }
                             }
 
                             // Choose the disk with the least available space, after the current
-                            // update compressions
+                            // update merges
                             let disk_to_use = available_space
                                 .iter()
                                 .enumerate()
@@ -1138,20 +1138,20 @@ where
                                 .map(|(i, _)| i);
 
                             // Choose the chunk with the largest update file size on the disk that
-                            // is not currently being compressed
+                            // is not currently being merged
                             let chunk_idx = disk_to_use.and_then(|root_idx| {
-                                largest_not_compressed_per_drive[root_idx]
+                                largest_not_merged_per_drive[root_idx]
                                     .map(|(chunk_idx, _)| chunk_idx)
                             });
 
                             if let Some(chunk_idx) = chunk_idx {
-                                // Set the state to currently compressing
+                                // Set the state to currently merging
                                 let mut update_file_states_write = update_file_states.write();
                                 if update_file_states_write[chunk_idx]
-                                    == UpdateFileState::NotCompressing
+                                    == UpdateFileState::NotMerging
                                 {
                                     update_file_states_write[chunk_idx] =
-                                        UpdateFileState::CurrentlyCompressing;
+                                        UpdateFileState::CurrentlyMerging;
                                 } else {
                                     // Another thread got here first
                                     continue;
@@ -1164,12 +1164,11 @@ where
                                 // Get a chunk buffer
                                 let mut chunk_buffer = self.chunk_buffers.take().unwrap();
 
-                                self.compress_update_files(&mut chunk_buffer, depth + 2, chunk_idx);
+                                self.merge_update_files(&mut chunk_buffer, depth + 2, chunk_idx);
 
-                                // Set the state back to not compressing
+                                // Set the state back to not merging
                                 let mut update_file_states_write = update_file_states.write();
-                                update_file_states_write[chunk_idx] =
-                                    UpdateFileState::NotCompressing;
+                                update_file_states_write[chunk_idx] = UpdateFileState::NotMerging;
                                 drop(update_file_states_write);
 
                                 // Put the chunk buffer back
@@ -1249,10 +1248,10 @@ where
             .settings
             .settings_provider
             .update_files_behavior(depth + 2)
-            .should_compress()
+            .should_merge()
         {
-            self.write_state(State::CompressAllUpdateFiles { depth });
-            self.compress_all_update_files(depth + 2);
+            self.write_state(State::MergeUpdateFiles { depth });
+            self.merge_all_update_files(depth + 2);
         }
 
         self.write_state(State::Cleanup { depth });
@@ -1313,7 +1312,7 @@ where
 
                     self.write_state(State::Done);
                 }
-                State::CompressAllUpdateFiles { mut depth } => {
+                State::MergeUpdateFiles { mut depth } => {
                     // Initialize update file manager with the current update file sizes
                     self.update_file_manager.try_read_sizes_from_disk();
 
@@ -1323,9 +1322,9 @@ where
                         .settings
                         .settings_provider
                         .update_files_behavior(depth + 2)
-                        .should_compress()
+                        .should_merge()
                     {
-                        self.compress_all_update_files(depth + 2);
+                        self.merge_all_update_files(depth + 2);
                     }
 
                     self.write_state(State::Cleanup { depth });
