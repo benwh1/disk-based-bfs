@@ -1,3 +1,10 @@
+//! Breadth-first search using hard drive space for storing intermediate data.
+//!
+//! The implementation is efficient, generic, parallel, and can use multiple hard drives. The
+//! algorithm is based on the paper [Minimizing Disk I/O in Two-Bit Breadth-First Search](https://cdn.aaai.org/AAAI/2008/AAAI08-050.pdf)
+//! of Richard Korf, with various improvements. It is suitable for very large implicit graphs
+//! (~10^13 nodes), e.g. the 15 puzzle graph.
+
 #![feature(buf_read_has_data_left)]
 #![feature(once_cell_get_mut)]
 #![warn(clippy::must_use_candidate)]
@@ -19,6 +26,8 @@
 #![deny(clippy::iter_with_drain)]
 #![deny(clippy::branches_sharing_code)]
 #![deny(clippy::redundant_clone)]
+#![deny(missing_docs)]
+#![deny(rustdoc::broken_intra_doc_links)]
 
 mod bfs;
 pub mod builder;
