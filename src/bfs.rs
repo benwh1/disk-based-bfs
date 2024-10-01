@@ -834,7 +834,9 @@ where
             vecs[chunk_idx].push(offset);
         }
 
-        for (chunk_idx, chunk_updates) in vecs.into_iter().enumerate() {
+        for (chunk_idx, chunk_updates) in
+            vecs.into_iter().enumerate().filter(|(_, v)| !v.is_empty())
+        {
             let update_bytes = bytemuck::cast_slice(&chunk_updates);
             let dir_path = self.settings.update_chunk_dir_path(depth + 1, chunk_idx);
             let file_name = Alphanumeric.sample_string(&mut rng, 16);
