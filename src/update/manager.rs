@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc, thread::Builder as ThreadBuilder};
 
-use itertools::Itertools;
+use itertools::Itertools as _;
 use parking_lot::{Condvar, Mutex, RwLock};
 use rand::distributions::{Alphanumeric, DistString as _};
 
@@ -96,7 +96,7 @@ where
         // Sort all the blocks into chunks that will be written to the same disk so that each chunk
         // can be processed by a separate thread
         let mut chunked_filled_blocks = (0..num_disks).map(|_| Vec::new()).collect::<Vec<_>>();
-        for block in filled_blocks.into_iter() {
+        for block in filled_blocks {
             let chunk_root_idx = self
                 .settings
                 .settings_provider

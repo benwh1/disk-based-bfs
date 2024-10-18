@@ -26,6 +26,8 @@
 #![deny(clippy::iter_with_drain)]
 #![deny(clippy::branches_sharing_code)]
 #![deny(clippy::redundant_clone)]
+#![deny(clippy::explicit_into_iter_loop)]
+#![deny(clippy::unused_trait_names)]
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 

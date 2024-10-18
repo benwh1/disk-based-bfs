@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{BufRead as _, Cursor, Error as IoError, ErrorKind, Read, Write},
+    io::{BufRead as _, Cursor, Error as IoError, ErrorKind, Read as _, Write as _},
     path::{Path, PathBuf},
     string::FromUtf8Error,
 };

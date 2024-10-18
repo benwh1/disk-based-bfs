@@ -2,7 +2,7 @@ use std::{cell::OnceCell, sync::Arc, thread::Builder as ThreadBuilder};
 
 use cityhasher::{CityHasher, HashSet};
 use parking_lot::{Condvar, Mutex, RwLock};
-use rand::distributions::{Alphanumeric, DistString};
+use rand::distributions::{Alphanumeric, DistString as _};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
