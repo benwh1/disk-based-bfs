@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "Fast generic implementation of breadth-first search using disk storage, suitable for extremely large implicit graphs."
 license = "SSPL-1.0"
+repository = "https://github.com/benwh1/disk-based-bfs"
+keywords = ["algorithm"]
+categories = ["algorithms"]
 
 [dependencies]
 bytemuck = "1.18.0"
